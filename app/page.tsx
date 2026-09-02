@@ -1,7 +1,7 @@
 'use client';
 
 import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
-import type { RequiredPhotoRole, PhotoRole } from './organizer';
+import type { RequiredPhotoRole } from './organizer';
 import {
   agencyFolderName,
   cleanSegment,
@@ -11,7 +11,7 @@ import {
   stationParts,
 } from './organizer';
 
-type StationFiles = Record<PhotoRole, File | null>;
+type StationFiles = Record<RequiredPhotoRole, File | null>;
 type Station = {
   id: string;
   hostname: string;
@@ -21,16 +21,15 @@ type Station = {
 };
 
 const REQUIRED_ROLES: RequiredPhotoRole[] = ['certificadora', 'serie', 'ubicacion'];
-const ROLE_LABELS: Record<PhotoRole, string> = {
+const ROLE_LABELS: Record<RequiredPhotoRole, string> = {
   certificadora: 'Fotografía certificadora',
   serie: 'No. serie y código DATAMATRIX',
   ubicacion: 'Ubicación, serie y DATAMATRIX',
-  cableado: 'Estado de cableado',
 };
 const FILE_ACCEPT = '.heic,.heif,.jpg,.jpeg,.png,image/heic,image/heif,image/jpeg,image/png';
 
 function blankFiles(): StationFiles {
-  return { certificadora: null, serie: null, ubicacion: null, cableado: null };
+  return { certificadora: null, serie: null, ubicacion: null };
 }
 
 function formatBytes(bytes: number) {
@@ -46,12 +45,10 @@ function FileSlot({
   role,
   file,
   onFile,
-  optional = false,
 }: {
-  role: PhotoRole;
+  role: RequiredPhotoRole;
   file: File | null;
   onFile: (file: File | null) => void;
-  optional?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -105,7 +102,7 @@ function FileSlot({
         <button type="button" className="min-w-0 flex-1 text-left" onClick={() => inputRef.current?.click()}>
           <span className="block truncate text-sm font-bold text-[#273044]">{ROLE_LABELS[role]}</span>
           <span className="mt-0.5 block truncate text-xs text-[#757c89]">
-            {file ? `${file.name} · ${formatBytes(file.size)}` : optional ? 'Opcional' : 'Seleccionar o arrastrar'}
+            {file ? `${file.name} · ${formatBytes(file.size)}` : 'Seleccionar o arrastrar'}
           </span>
         </button>
         {file && (
@@ -127,6 +124,8 @@ export default function Home() {
   const [agencyCode, setAgencyCode] = useState('');
   const [agencyName, setAgencyName] = useState('');
   const [stations, setStations] = useState<Station[]>([]);
+  const [cableFiles, setCableFiles] = useState<File[]>([]);
+  const [cableDragging, setCableDragging] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [message, setMessage] = useState('');
   const [parsing, setParsing] = useState(false);
@@ -199,7 +198,7 @@ export default function Home() {
     setStations((current) => current.map((station) => (station.id === id ? { ...station, ...patch } : station)));
   };
 
-  const updateFile = (id: string, role: PhotoRole, file: File | null) => {
+  const updateFile = (id: string, role: RequiredPhotoRole, file: File | null) => {
     setStations((current) =>
       current.map((station) =>
         station.id === id ? { ...station, files: { ...station.files, [role]: file } } : station,
@@ -242,11 +241,28 @@ export default function Home() {
     setStations((current) => [...current, newStation(`CAJA ${next}`)]);
   };
 
+  const addCableFiles = (fileList: FileList | null) => {
+    const incoming = Array.from(fileList || []).filter(
+      (file) => file.type.startsWith('image/') || /\.(heic|heif|jpe?g|png)$/i.test(file.name),
+    );
+    if (!incoming.length) {
+      setMessage('Selecciona archivos de imagen para el estado de cableado.');
+      return;
+    }
+    setCableFiles((current) => {
+      const known = new Set(current.map((file) => `${file.name}|${file.size}|${file.lastModified}`));
+      const additions = incoming.filter((file) => !known.has(`${file.name}|${file.size}|${file.lastModified}`));
+      return [...current, ...additions];
+    });
+    setMessage(`${incoming.length} fotografía${incoming.length === 1 ? '' : 's'} de cableado seleccionada${incoming.length === 1 ? '' : 's'}.`);
+  };
+
   const reset = () => {
     setPdfFile(null);
     setAgencyCode('');
     setAgencyName('');
     setStations([]);
+    setCableFiles([]);
     setWarnings([]);
     setMessage('');
     setProgress(0);
@@ -287,13 +303,13 @@ export default function Home() {
             });
           }
         });
-        const cable = station.files.cableado;
-        if (cable) {
-          cableFolder?.file(`${parts.cable}${extensionOf(cable.name)}`, cable, {
-            binary: true,
-            compression: 'STORE',
-          });
-        }
+      });
+
+      cableFiles.forEach((file, index) => {
+        cableFolder?.file(`${index + 1}${extensionOf(file.name)}`, file, {
+          binary: true,
+          compression: 'STORE',
+        });
       });
 
       const blob = await zip.generateAsync(
@@ -398,7 +414,7 @@ export default function Home() {
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-[#8a909c]">2 · Evidencias</p>
                 <h2 className="mt-1 text-2xl font-black tracking-[-0.03em]">Estaciones detectadas</h2>
-                <p className="mt-1 text-sm text-[#717885]">Carga rápida: selecciona 1) certificadora, 2) serie y 3) ubicación. Cableado es opcional.</p>
+                <p className="mt-1 text-sm text-[#717885]">Carga rápida: selecciona 1) certificadora, 2) serie y 3) ubicación. El cableado se carga aparte.</p>
               </div>
               <button type="button" onClick={addStation} className="rounded-xl border border-[#c9c7c0] bg-white px-4 py-2.5 text-sm font-bold shadow-sm hover:border-[#172033]">+ Agregar estación</button>
             </div>
@@ -437,8 +453,6 @@ export default function Home() {
                       {REQUIRED_ROLES.map((role) => (
                         <FileSlot key={role} role={role} file={station.files[role]} onFile={(file) => updateFile(station.id, role, file)} />
                       ))}
-                      <div className="my-1 h-px bg-[#ebe9e3]" />
-                      <FileSlot role="cableado" file={station.files.cableado} onFile={(file) => updateFile(station.id, 'cableado', file)} optional />
                     </div>
 
                     {station.ip && REQUIRED_ROLES.some((role) => station.files[role]) && (
@@ -451,6 +465,57 @@ export default function Home() {
                 </article>
               ))}
             </div>
+
+            <article className="mt-6 overflow-hidden rounded-[22px] border border-[#d9d7d0] bg-white shadow-[0_10px_35px_rgba(23,32,51,0.045)]">
+              <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[300px_1fr]">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.14em] text-[#d7193f]">Estado de cableado · Opcional</p>
+                  <h3 className="mt-2 text-xl font-black tracking-[-0.025em]">Todas las fotos en un solo lugar</h3>
+                  <p className="mt-2 text-sm leading-6 text-[#717885]">Selecciona o arrastra todas las fotografías de cableado juntas. Se guardarán numeradas dentro de la carpeta <strong>ESTADO CABLEADO</strong>.</p>
+                </div>
+
+                <div>
+                  <label
+                    className={`block cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition ${
+                      cableDragging ? 'border-[#d7193f] bg-[#fff3f5]' : 'border-[#cbc8c0] bg-[#faf9f6] hover:border-[#d7193f] hover:bg-[#fff7f8]'
+                    }`}
+                    onDragEnter={(event) => {
+                      event.preventDefault();
+                      setCableDragging(true);
+                    }}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDragLeave={() => setCableDragging(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setCableDragging(false);
+                      addCableFiles(event.dataTransfer.files);
+                    }}
+                  >
+                    <input className="sr-only" type="file" accept={FILE_ACCEPT} multiple onChange={(event) => addCableFiles(event.target.files)} />
+                    <span className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-white text-xl font-black shadow-sm">+</span>
+                    <span className="mt-3 block font-black">Seleccionar todas las fotos de cableado</span>
+                    <span className="mt-1 block text-xs text-[#777e8c]">Puedes añadir más fotografías en varias selecciones</span>
+                  </label>
+
+                  {cableFiles.length > 0 && (
+                    <div className="mt-3 rounded-xl border border-[#bdd9ca] bg-[#f4faf6] p-3">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <p className="text-sm font-black text-[#17663f]">{cableFiles.length} fotografía{cableFiles.length === 1 ? '' : 's'} seleccionada{cableFiles.length === 1 ? '' : 's'}</p>
+                        <button type="button" onClick={() => setCableFiles([])} className="rounded-md px-2 py-1 text-xs font-bold text-[#8a5360] hover:bg-white">Quitar todas</button>
+                      </div>
+                      <div className="max-h-32 space-y-1 overflow-auto pr-1">
+                        {cableFiles.map((file, index) => (
+                          <div key={`${file.name}-${file.size}-${file.lastModified}`} className="flex items-center justify-between gap-3 rounded-lg bg-white/70 px-3 py-2 text-xs">
+                            <span className="min-w-0 truncate"><strong>{index + 1}.</strong> {file.name} · {formatBytes(file.size)}</span>
+                            <button type="button" onClick={() => setCableFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="shrink-0 font-bold text-[#8a5360]">Quitar</button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </article>
           </section>
         )}
 
@@ -460,7 +525,7 @@ export default function Home() {
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-[0.12em] text-[#8a909c]">3 · Descargar</p>
                 <p className="mt-1 truncate font-black">{outputName}.zip</p>
-                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías obligatorias · {stations.filter((station) => station.files.cableado).length} de cableado</p>
+                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías obligatorias · {cableFiles.length} de cableado</p>
                 <div className="mt-2 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-[#ebe9e3]">
                   <div className="h-full rounded-full bg-[#d7193f] transition-all" style={{ width: `${requiredTotal ? (requiredReady / requiredTotal) * 100 : 0}%` }} />
                 </div>
