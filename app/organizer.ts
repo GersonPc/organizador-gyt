@@ -5,6 +5,8 @@ export type ParsedStation = {
   hostname: string;
   ip: string;
   label: string;
+  serial: string;
+  datamatrix: string;
 };
 
 export type ParsedBoleta = {
@@ -91,6 +93,14 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
     equipmentText.matchAll(/\b((?:\d{1,3}\.){3}\d{1,3})\b/g),
     (match) => match[1],
   );
+  const serials = Array.from(
+    equipmentText.matchAll(/No\.\s*Serie\s+(\d{5,})/gi),
+    (match) => match[1],
+  );
+  const datamatrices = Array.from(
+    equipmentText.matchAll(/DATAMATRIX\s+(GTC[A-Z0-9-]+)/gi),
+    (match) => match[1].toUpperCase(),
+  );
 
   const stationCount = Math.max(hostnames.length, ips.length);
   const stations = Array.from({ length: stationCount }, (_, index) => {
@@ -99,6 +109,8 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
       hostname,
       ip: ips[index] || '',
       label: stationLabelFromHostname(hostname, index),
+      serial: serials[index] || '',
+      datamatrix: datamatrices[index] || '',
     };
   });
 
@@ -110,6 +122,9 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
   }
   if (hostnames.length !== ips.length) {
     warnings.push('La cantidad de hostnames e IP no coincide. Revisa las estaciones antes de continuar.');
+  }
+  if (stations.length && (serials.length !== stations.length || datamatrices.length !== stations.length)) {
+    warnings.push('Hay estaciones sin número de serie o código DATAMATRIX en la boleta; se mostrarán como no especificadas.');
   }
 
   return { agencyCode, agencyName, stations, warnings };

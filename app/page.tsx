@@ -17,6 +17,8 @@ type Station = {
   hostname: string;
   ip: string;
   label: string;
+  serial: string;
+  datamatrix: string;
   files: StationFiles;
 };
 
@@ -38,7 +40,7 @@ function formatBytes(bytes: number) {
 }
 
 function newStation(label: string): Station {
-  return { id: crypto.randomUUID(), hostname: '', ip: '', label, files: blankFiles() };
+  return { id: crypto.randomUUID(), hostname: '', ip: '', label, serial: '', datamatrix: '', files: blankFiles() };
 }
 
 function FileSlot({
@@ -428,6 +430,14 @@ export default function Home() {
                       <div className="min-w-0">
                         <p className="truncate font-black">{station.label || 'Sin nombre'}</p>
                         <p className="mt-0.5 truncate text-xs text-[#7b818d]">{station.hostname || 'Agregada manualmente'}</p>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <span className="rounded-md border border-[#dedbd3] bg-white px-2 py-1 text-[11px] font-semibold text-[#5e6674]">
+                            Serie esperada: <strong className="text-[#273044]">{station.serial || 'No especificada'}</strong>
+                          </span>
+                          <span className="rounded-md border border-[#dedbd3] bg-white px-2 py-1 text-[11px] font-semibold text-[#5e6674]">
+                            DATAMATRIX: <strong className="text-[#273044]">{station.datamatrix || 'No especificado'}</strong>
+                          </span>
+                        </div>
                       </div>
                     </div>
                     <button type="button" onClick={() => setStations((current) => current.filter((item) => item.id !== station.id))} className="rounded-lg px-2 py-1 text-xs font-bold text-[#9b5261] hover:bg-[#fff0f3]">Eliminar</button>
