@@ -9,7 +9,10 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "vinext start",
-    "lint": "eslint . --ignore-pattern dist --ignore-pattern .next"
+    "lint": "eslint . --ignore-pattern dist --ignore-pattern dist-cloudflare --ignore-pattern .next --ignore-pattern public",
+    "dev:cloudflare": "vite --config vite.cloudflare.config.ts",
+    "build:cloudflare": "vite build --config vite.cloudflare.config.ts",
+    "deploy:cloudflare": "npm run build:cloudflare && wrangler deploy --config wrangler.jsonc"
   },
   "dependencies": {
     "jszip": "^3.10.1",
