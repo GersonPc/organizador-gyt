@@ -26,7 +26,7 @@ Solo se publica `dist-cloudflare`, generado con Vite. No se necesitan secretos d
 
 ## Conexión GitHub → Cloudflare
 
-Para activar publicaciones automáticas, conectar este repositorio desde la configuración de Builds del Worker `organizador-gyt`:
+La publicación automática está conectada al repositorio `GersonPc/organizador-gyt` mediante Cloudflare Workers Builds con esta configuración:
 
 - Rama de producción: `main`.
 - Directorio raíz: raíz del repositorio.
@@ -34,6 +34,6 @@ Para activar publicaciones automáticas, conectar este repositorio desde la conf
 - Comando de despliegue: `npx wrangler deploy --config wrangler.jsonc`.
 - Node.js: 22.13 o posterior.
 
-Una vez activada esa conexión, un `git push origin main` inicia la publicación. Editar archivos en una computadora, o descargarlos como ZIP, no actualiza por sí solo el sitio. Antes de trabajar desde otra computadora, ejecutar `git pull --ff-only`.
+Un `git push origin main` inicia la publicación. Editar archivos en una computadora, o descargarlos como ZIP, no actualiza por sí solo el sitio. Antes de trabajar desde otra computadora, ejecutar `git pull --ff-only`.
 
 Los comandos originales `dev`, `build` y `start`, y la configuración de Sites se conservan para compatibilidad con el alojamiento anterior; no son los comandos de compilación de Cloudflare.
