@@ -2,6 +2,8 @@
 
 import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
 import type { RequiredPhotoRole } from './organizer';
+import { addDocumentsToZip, blankDocuments, DOCUMENT_SLOTS, documentFileError } from './documents';
+import type { DocumentFiles, DocumentRole } from './documents';
 import {
   agencyFolderName,
   cleanSegment,
@@ -44,20 +46,32 @@ function newStation(label: string): Station {
 }
 
 function FileSlot({
-  role,
+  label,
+  accept = FILE_ACCEPT,
   file,
   onFile,
+  validateFile,
 }: {
-  role: RequiredPhotoRole;
+  label: string;
+  accept?: string;
   file: File | null;
   onFile: (file: File | null) => void;
+  validateFile?: (file: File) => string | null;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [error, setError] = useState('');
 
   const takeFile = (files: FileList | null) => {
     const next = files?.[0];
-    if (next) onFile(next);
+    if (!next) return;
+    if (files.length !== 1) {
+      setError('Selecciona un solo archivo para este espacio.');
+      return;
+    }
+    const validationError = validateFile?.(next);
+    setError(validationError || '');
+    if (!validationError) onFile(next);
   };
 
   const drop = (event: DragEvent<HTMLDivElement>) => {
@@ -87,8 +101,12 @@ function FileSlot({
         ref={inputRef}
         className="sr-only"
         type="file"
-        accept={FILE_ACCEPT}
-        onChange={(event) => takeFile(event.target.files)}
+        accept={accept}
+        aria-label={label}
+        onChange={(event) => {
+          takeFile(event.target.files);
+          event.target.value = '';
+        }}
       />
       <div className="flex min-w-0 items-center gap-3">
         <button
@@ -97,13 +115,13 @@ function FileSlot({
             file ? 'bg-[#dff1e6] text-[#17663f]' : 'bg-white text-[#7b818d] shadow-sm'
           }`}
           onClick={() => inputRef.current?.click()}
-          aria-label={`Seleccionar ${ROLE_LABELS[role]}`}
+          aria-label={`Seleccionar ${label}`}
         >
           {file ? '✓' : '+'}
         </button>
         <button type="button" className="min-w-0 flex-1 text-left" onClick={() => inputRef.current?.click()}>
-          <span className="block truncate text-sm font-bold text-[#273044]">{ROLE_LABELS[role]}</span>
-          <span className="mt-0.5 block truncate text-xs text-[#757c89]">
+          <span className="block text-sm font-bold text-[#273044]">{label}</span>
+          <span title={file?.name} className="mt-0.5 block truncate text-sm text-[#757c89]">
             {file ? `${file.name} · ${formatBytes(file.size)}` : 'Seleccionar o arrastrar'}
           </span>
         </button>
@@ -111,12 +129,17 @@ function FileSlot({
           <button
             type="button"
             className="rounded-md px-2 py-1 text-xs font-bold text-[#8a5360] hover:bg-white"
-            onClick={() => onFile(null)}
+            aria-label={`Quitar ${label}`}
+            onClick={() => {
+              onFile(null);
+              setError('');
+            }}
           >
             Quitar
           </button>
         )}
       </div>
+      {error && <p role="alert" className="mt-2 text-sm text-[#b91435]">{error}</p>}
     </div>
   );
 }
@@ -127,6 +150,7 @@ export default function Home() {
   const [agencyName, setAgencyName] = useState('');
   const [stations, setStations] = useState<Station[]>([]);
   const [cableFiles, setCableFiles] = useState<File[]>([]);
+  const [documents, setDocuments] = useState<DocumentFiles>(blankDocuments);
   const [cableDragging, setCableDragging] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [message, setMessage] = useState('');
@@ -135,6 +159,7 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
 
   const requiredTotal = stations.length * REQUIRED_ROLES.length;
+  const documentsReady = DOCUMENT_SLOTS.filter((slot) => documents[slot.role]).length;
   const requiredReady = stations.reduce(
     (total, station) => total + REQUIRED_ROLES.filter((role) => station.files[role]).length,
     0,
@@ -158,6 +183,7 @@ export default function Home() {
     const file = event.target.files?.[0];
     if (!file) return;
     setPdfFile(file);
+    setDocuments(blankDocuments());
     setParsing(true);
     setWarnings([]);
     setMessage('');
@@ -206,6 +232,11 @@ export default function Home() {
         station.id === id ? { ...station, files: { ...station.files, [role]: file } } : station,
       ),
     );
+    setMessage('');
+  };
+
+  const updateDocument = (role: DocumentRole, file: File | null) => {
+    setDocuments((current) => ({ ...current, [role]: file }));
     setMessage('');
   };
 
@@ -265,6 +296,7 @@ export default function Home() {
     setAgencyName('');
     setStations([]);
     setCableFiles([]);
+    setDocuments(blankDocuments());
     setWarnings([]);
     setMessage('');
     setProgress(0);
@@ -291,6 +323,7 @@ export default function Home() {
         binary: true,
         compression: 'STORE',
       });
+      await addDocumentsToZip(root, documents);
       const cableFolder = root.folder('ESTADO CABLEADO');
 
       stations.forEach((station) => {
@@ -327,7 +360,7 @@ export default function Home() {
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       setProgress(100);
-      setMessage('ZIP generado correctamente. La calidad y los bytes de cada imagen se conservaron.');
+      setMessage('ZIP generado correctamente. Los archivos conservaron su contenido original y los documentos adjuntos conservaron sus nombres.');
     } catch {
       setMessage('No fue posible generar el ZIP. Revisa los archivos e inténtalo nuevamente.');
     } finally {
@@ -363,8 +396,8 @@ export default function Home() {
             <p className="mt-4 max-w-2xl leading-7 text-[#626a78]">Lee la boleta, asigna tres evidencias por estación y descarga una carpeta ZIP lista para entregar.</p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center text-xs">
-            {['1. Boleta', '2. Fotografías', '3. ZIP'].map((step, index) => {
-              const active = index === 0 ? Boolean(pdfFile) : index === 1 ? requiredReady > 0 : canGenerate;
+            {['1. Boleta', '2. Evidencias', '3. ZIP'].map((step, index) => {
+              const active = index === 0 ? Boolean(pdfFile) : index === 1 ? requiredReady > 0 || documentsReady > 0 : canGenerate;
               return <span key={step} className={`rounded-lg px-2 py-2.5 font-bold ${active ? 'bg-[#172033] text-white' : 'bg-white text-[#7b818d]'}`}>{step}</span>;
             })}
           </div>
@@ -461,7 +494,7 @@ export default function Home() {
 
                     <div className="mt-3 grid gap-2">
                       {REQUIRED_ROLES.map((role) => (
-                        <FileSlot key={role} role={role} file={station.files[role]} onFile={(file) => updateFile(station.id, role, file)} />
+                        <FileSlot key={role} label={ROLE_LABELS[role]} file={station.files[role]} onFile={(file) => updateFile(station.id, role, file)} />
                       ))}
                     </div>
 
@@ -475,6 +508,29 @@ export default function Home() {
                 </article>
               ))}
             </div>
+
+            <article className="mt-6 rounded-[22px] border border-[#d9d7d0] bg-white p-5 shadow-[0_10px_35px_rgba(23,32,51,0.045)] sm:p-6">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-xl font-black tracking-[-0.025em]">Documentos firmados y archivo Word</h3>
+                  <p className="mt-2 text-sm leading-6 text-[#717885]">Adjunta la boleta firmada, el informe firmado y su versión en Word. Se incluyen en la carpeta <strong>DOCUMENTOS</strong> del ZIP, separados por tipo y con su nombre original.</p>
+                  <p className="mt-1 text-sm text-[#717885]">Firmados: PDF o imagen. Word: .doc o .docx.</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-[#f4f3ef] px-3 py-1.5 text-sm font-bold text-[#505867]" aria-live="polite">{documentsReady} de 3 documentos</span>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-3">
+                {DOCUMENT_SLOTS.map((slot) => (
+                  <FileSlot
+                    key={slot.role}
+                    label={slot.label}
+                    accept={slot.accept}
+                    file={documents[slot.role]}
+                    onFile={(file) => updateDocument(slot.role, file)}
+                    validateFile={(file) => documentFileError(slot.role, file)}
+                  />
+                ))}
+              </div>
+            </article>
 
             <article className="mt-6 overflow-hidden rounded-[22px] border border-[#d9d7d0] bg-white shadow-[0_10px_35px_rgba(23,32,51,0.045)]">
               <div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-[300px_1fr]">
@@ -535,7 +591,7 @@ export default function Home() {
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-[0.12em] text-[#8a909c]">3 · Descargar</p>
                 <p className="mt-1 truncate font-black">{outputName}.zip</p>
-                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías obligatorias · {cableFiles.length} de cableado</p>
+                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías obligatorias · {cableFiles.length} de cableado · {documentsReady} de 3 documentos</p>
                 <div className="mt-2 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-[#ebe9e3]">
                   <div className="h-full rounded-full bg-[#d7193f] transition-all" style={{ width: `${requiredTotal ? (requiredReady / requiredTotal) * 100 : 0}%` }} />
                 </div>
