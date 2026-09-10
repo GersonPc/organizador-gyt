@@ -512,11 +512,12 @@ export default function Home() {
             <article className="mt-6 rounded-[22px] border border-[#d9d7d0] bg-white p-5 shadow-[0_10px_35px_rgba(23,32,51,0.045)] sm:p-6">
               <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div>
+                  <p className="mb-2 text-sm font-bold text-[#d7193f]">Documentos opcionales</p>
                   <h3 className="text-xl font-black tracking-[-0.025em]">Documentos firmados y archivo Word</h3>
-                  <p className="mt-2 text-sm leading-6 text-[#717885]">Adjunta la boleta firmada, el informe firmado y su versión en Word. Se incluyen en la carpeta <strong>DOCUMENTOS</strong> del ZIP, separados por tipo y con su nombre original.</p>
+                  <p className="mt-2 text-sm leading-6 text-[#717885]">Puedes descargar el ZIP sin estos documentos o adjuntar solo los que tengas. Los que agregues se incluyen en la carpeta <strong>DOCUMENTOS</strong>, separados por tipo y con su nombre original.</p>
                   <p className="mt-1 text-sm text-[#717885]">Firmados: PDF o imagen. Word: .doc o .docx.</p>
                 </div>
-                <span className="shrink-0 rounded-full bg-[#f4f3ef] px-3 py-1.5 text-sm font-bold text-[#505867]" aria-live="polite">{documentsReady} de 3 documentos</span>
+                <span className="shrink-0 rounded-full bg-[#f4f3ef] px-3 py-1.5 text-sm font-bold text-[#505867]" aria-live="polite">{documentsReady} documento{documentsReady === 1 ? '' : 's'} adjunto{documentsReady === 1 ? '' : 's'}</span>
               </div>
               <div className="grid gap-3 lg:grid-cols-3">
                 {DOCUMENT_SLOTS.map((slot) => (
@@ -591,7 +592,7 @@ export default function Home() {
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-[0.12em] text-[#8a909c]">3 · Descargar</p>
                 <p className="mt-1 truncate font-black">{outputName}.zip</p>
-                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías obligatorias · {cableFiles.length} de cableado · {documentsReady} de 3 documentos</p>
+                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías obligatorias · {cableFiles.length} de cableado · {documentsReady} documento{documentsReady === 1 ? '' : 's'} opcional{documentsReady === 1 ? '' : 'es'}</p>
                 <div className="mt-2 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-[#ebe9e3]">
                   <div className="h-full rounded-full bg-[#d7193f] transition-all" style={{ width: `${requiredTotal ? (requiredReady / requiredTotal) * 100 : 0}%` }} />
                 </div>
