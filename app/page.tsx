@@ -23,6 +23,7 @@ type Station = {
   serial: string;
   datamatrix: string;
   files: StationFiles;
+  collapsed?: boolean;
 };
 
 const REQUIRED_ROLES: RequiredPhotoRole[] = ['certificadora', 'serie', 'ubicacion'];
@@ -235,9 +236,11 @@ export default function Home() {
 
   const updateFile = (id: string, role: RequiredPhotoRole, file: File | null) => {
     setStations((current) =>
-      current.map((station) =>
-        station.id === id ? { ...station, files: { ...station.files, [role]: file } } : station,
-      ),
+      current.map((station) => {
+        if (station.id !== id) return station;
+        const files = { ...station.files, [role]: file };
+        return { ...station, files, collapsed: REQUIRED_ROLES.every((requiredRole) => files[requiredRole]) };
+      }),
     );
     setMessage('');
   };
@@ -260,6 +263,7 @@ export default function Home() {
         station.id === id
           ? {
               ...station,
+              collapsed: true,
               files: {
                 ...station.files,
                 certificadora: files[0],
@@ -414,17 +418,17 @@ export default function Home() {
         <section className="rounded-[26px] border border-[#d9d7d0] bg-white p-5 shadow-[0_16px_50px_rgba(23,32,51,0.06)] sm:p-7">
           <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.14em] text-[#8a909c]">1 · Boleta de servicio</p>
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-[#8a909c]">1 · Boleta de Servicio de agencia</p>
               <h2 className="mt-2 text-xl font-black tracking-[-0.02em]">Detectar agencia y estaciones</h2>
               <p className="mt-2 text-sm leading-6 text-[#717885]">El PDF se lee en este dispositivo. Nunca se envía al alojamiento del sitio.</p>
             </div>
             <div>
               <label className="block cursor-pointer rounded-2xl border-2 border-dashed border-[#cbc8c0] bg-[#faf9f6] p-5 transition hover:border-[#d7193f] hover:bg-[#fff7f8]">
-                <input className="sr-only" type="file" accept="application/pdf,.pdf" onChange={handlePdf} />
+                <input className="sr-only" type="file" accept="application/pdf,.pdf" aria-label="Boleta de Servicio de agencia" onChange={handlePdf} />
                 <div className="flex items-center gap-4">
                   <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white text-xl font-black shadow-sm">{parsing ? '…' : pdfFile ? '✓' : '↑'}</span>
                   <div className="min-w-0">
-                    <span className="block truncate font-bold">{pdfFile?.name || 'Seleccionar boleta PDF'}</span>
+                    <span className="block truncate font-bold">{pdfFile?.name || 'Boleta de Servicio de agencia'}</span>
                     <span className="mt-1 block text-xs text-[#777e8c]">{parsing ? 'Leyendo datos…' : pdfFile ? 'Selecciona otra para reemplazarla' : 'Solo se conserva durante esta sesión'}</span>
                   </div>
                 </div>
@@ -468,7 +472,7 @@ export default function Home() {
               </p>
             )}
 
-            <div className="grid gap-5 xl:grid-cols-2">
+            <div className="grid items-start gap-5 xl:grid-cols-2">
               {stations.map((station, stationIndex) => (
                 <article key={station.id} className="overflow-hidden rounded-[22px] border border-[#d9d7d0] bg-white shadow-[0_10px_35px_rgba(23,32,51,0.045)]">
                   <div className="flex items-start justify-between gap-4 border-b border-[#ebe9e3] bg-[#fbfaf7] px-5 py-4">
@@ -487,10 +491,25 @@ export default function Home() {
                         </div>
                       </div>
                     </div>
-                    <button type="button" onClick={() => setStations((current) => current.filter((item) => item.id !== station.id))} className="rounded-lg px-2 py-1 text-xs font-bold text-[#9b5261] hover:bg-[#fff0f3]">Eliminar</button>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <span className={`text-xs font-bold ${REQUIRED_ROLES.every((role) => station.files[role]) ? 'text-[#17663f]' : 'text-[#717885]'}`} aria-live="polite">
+                        {REQUIRED_ROLES.filter((role) => station.files[role]).length}/3 fotos
+                      </span>
+                      <button
+                        type="button"
+                        aria-expanded={!station.collapsed}
+                        aria-controls={`station-${station.id}`}
+                        aria-label={`${station.collapsed ? 'Expandir' : 'Contraer'} ${station.label || 'estación'}`}
+                        onClick={() => updateStation(station.id, { collapsed: !station.collapsed })}
+                        className="rounded-lg border border-[#d8d6cf] bg-white px-3 py-1.5 text-sm font-bold hover:border-[#172033]"
+                      >
+                        {station.collapsed ? 'Expandir ▾' : 'Contraer ▴'}
+                      </button>
+                      <button type="button" onClick={() => setStations((current) => current.filter((item) => item.id !== station.id))} className="rounded-lg px-2 py-1 text-xs font-bold text-[#9b5261] hover:bg-[#fff0f3]">Eliminar</button>
+                    </div>
                   </div>
 
-                  <div className="p-5">
+                  <div id={`station-${station.id}`} hidden={station.collapsed} className="p-5">
                     <div className="grid gap-3 sm:grid-cols-2">
                       <label className="text-xs font-bold text-[#505867]">Ubicación
                         <input value={station.label} onChange={(event) => updateStation(station.id, { label: event.target.value.toUpperCase() })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" />
