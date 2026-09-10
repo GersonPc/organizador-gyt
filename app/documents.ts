@@ -4,19 +4,16 @@ export const DOCUMENT_SLOTS = [
   {
     role: 'boleta',
     label: 'Boleta de servicio firmada',
-    folder: 'BOLETA DE SERVICIO FIRMADA',
     accept: '.pdf,.jpg,.jpeg,.png,.heic,.heif',
   },
   {
     role: 'informe',
     label: 'Informe de finalización firmado',
-    folder: 'INFORME DE FINALIZACIÓN FIRMADO',
     accept: '.pdf,.jpg,.jpeg,.png,.heic,.heif',
   },
   {
     role: 'word',
     label: 'Informe de finalización en Word',
-    folder: 'INFORME DE FINALIZACIÓN EN WORD',
     accept: '.doc,.docx',
   },
 ] as const;
@@ -39,12 +36,33 @@ export function documentFileError(role: DocumentRole, file: File): string | null
   return null;
 }
 
-export async function addDocumentsToZip(root: JSZip, files: DocumentFiles) {
+export function missingDocumentsWarning(files: DocumentFiles): string | null {
+  const missing = DOCUMENT_SLOTS.filter((slot) => !files[slot.role]);
+  if (!missing.length) return null;
+  return `No se adjuntaron los siguientes documentos opcionales:\n\n${missing.map((slot) => `• ${slot.label}`).join('\n')}\n\nAl pulsar Aceptar se generará el ZIP con los archivos disponibles.`;
+}
+
+export function documentNamesError(files: DocumentFiles): string | null {
+  const names = new Set<string>();
   for (const slot of DOCUMENT_SLOTS) {
     const file = files[slot.role];
     if (!file) continue;
-    // Separate folders preserve identical original names without overwriting files.
-    root.file(`DOCUMENTOS/${slot.folder}/${file.name}`, await file.arrayBuffer(), {
+    const name = file.name.normalize('NFC').toLowerCase();
+    if (names.has(name)) {
+      return `Hay documentos con el mismo nombre: «${file.name}». Selecciona archivos con nombres distintos para incluirlos juntos en la raíz del ZIP sin sobrescribirlos.`;
+    }
+    names.add(name);
+  }
+  return null;
+}
+
+export async function addDocumentsToZip(zip: JSZip, files: DocumentFiles) {
+  const error = documentNamesError(files);
+  if (error) throw new Error(error);
+  for (const slot of DOCUMENT_SLOTS) {
+    const file = files[slot.role];
+    if (!file) continue;
+    zip.file(file.name, await file.arrayBuffer(), {
       binary: true,
       compression: 'STORE',
     });

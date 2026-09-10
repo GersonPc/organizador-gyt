@@ -2,11 +2,10 @@
 
 import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
 import type { RequiredPhotoRole } from './organizer';
-import { addDocumentsToZip, blankDocuments, DOCUMENT_SLOTS, documentFileError } from './documents';
+import { addDocumentsToZip, blankDocuments, DOCUMENT_SLOTS, documentFileError, documentNamesError, missingDocumentsWarning } from './documents';
 import type { DocumentFiles, DocumentRole } from './documents';
 import {
   agencyFolderName,
-  cleanSegment,
   extensionOf,
   hasCertificadora,
   parseBoletaText,
@@ -315,10 +314,19 @@ export default function Home() {
   };
 
   const generateZip = async () => {
+    if (generating) return;
     if (!canGenerate || !pdfFile) {
       setMessage('Completa los datos y las tres fotografías obligatorias de cada estación.');
       return;
     }
+
+    const namesError = documentNamesError(documents);
+    if (namesError) {
+      setMessage(namesError);
+      return;
+    }
+    const warning = missingDocumentsWarning(documents);
+    if (warning) window.alert(warning);
 
     setGenerating(true);
     setProgress(0);
@@ -329,13 +337,7 @@ export default function Home() {
       const root = zip.folder(outputName);
       if (!root) throw new Error('No se pudo crear la carpeta principal.');
 
-      const safeCode = cleanSegment(agencyCode, 'SIN CODIGO');
-      const safeName = cleanSegment(agencyName.toUpperCase(), 'SIN NOMBRE');
-      root.file(`Boleta de Servicio AG${safeCode} ${safeName}.pdf`, pdfFile, {
-        binary: true,
-        compression: 'STORE',
-      });
-      await addDocumentsToZip(root, documents);
+      await addDocumentsToZip(zip, documents);
       const cableFolder = root.folder('ESTADO CABLEADO');
 
       stations.forEach((station) => {
@@ -420,7 +422,7 @@ export default function Home() {
             <div>
               <p className="text-xs font-black uppercase tracking-[0.14em] text-[#8a909c]">1 · Boleta de Servicio de agencia</p>
               <h2 className="mt-2 text-xl font-black tracking-[-0.02em]">Detectar agencia y estaciones</h2>
-              <p className="mt-2 text-sm leading-6 text-[#717885]">El PDF se lee en este dispositivo. Nunca se envía al alojamiento del sitio.</p>
+              <p className="mt-2 text-sm leading-6 text-[#717885]">El PDF se lee en este dispositivo para identificar cajas y series. Solo sirve como referencia y no se incluye en el ZIP.</p>
             </div>
             <div>
               <label className="block cursor-pointer rounded-2xl border-2 border-dashed border-[#cbc8c0] bg-[#faf9f6] p-5 transition hover:border-[#d7193f] hover:bg-[#fff7f8]">
@@ -547,7 +549,7 @@ export default function Home() {
                 <div>
                   <p className="mb-2 text-sm font-bold text-[#d7193f]">Documentos opcionales</p>
                   <h3 className="text-xl font-black tracking-[-0.025em]">Documentos firmados y archivo Word</h3>
-                  <p className="mt-2 text-sm leading-6 text-[#717885]">Puedes descargar el ZIP sin estos documentos o adjuntar solo los que tengas. Los que agregues se incluyen en la carpeta <strong>DOCUMENTOS</strong>, separados por tipo y con su nombre original.</p>
+                  <p className="mt-2 text-sm leading-6 text-[#717885]">Puedes adjuntar solo los documentos que tengas. Se incluyen en la raíz del ZIP, fuera de las carpetas y con su nombre original. Si falta alguno, aparecerá un aviso; pulsa Aceptar para generar el ZIP con los archivos disponibles.</p>
                   <p className="mt-1 text-sm text-[#717885]">Firmados: PDF o imagen. Word: .doc o .docx.</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-[#f4f3ef] px-3 py-1.5 text-sm font-bold text-[#505867]" aria-live="polite">{documentsReady} documento{documentsReady === 1 ? '' : 's'} adjunto{documentsReady === 1 ? '' : 's'}</span>

@@ -2,6 +2,8 @@
 
 Aplicación de navegador para ordenar fotografías de certificadoras y descargar un ZIP por agencia. Las fotos y el PDF se procesan localmente; no se envían a un servidor ni se guardan en una base de datos. Las imágenes conservan sus bytes originales.
 
+La boleta del primer paso se usa solo para leer las cajas y sus identificadores; no se incluye en el ZIP. Los tres documentos opcionales (boleta firmada, informe firmado e informe en Word) se guardan en la raíz del ZIP con su nombre original. Las fotografías conservan sus carpetas por agencia. Si falta algún documento, un aviso permite continuar al pulsar Aceptar.
+
 ## Desarrollo para Cloudflare
 
 Requiere Node.js 22.13 o posterior y npm.
