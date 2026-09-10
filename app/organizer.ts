@@ -16,6 +16,10 @@ export type ParsedBoleta = {
   warnings: string[];
 };
 
+export function hasCertificadora(station: Pick<ParsedStation, 'serial' | 'datamatrix'>) {
+  return Boolean(station.serial.trim() || station.datamatrix.trim());
+}
+
 const INVALID_WINDOWS_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g;
 
 export function cleanSegment(value: string, fallback: string) {
@@ -85,32 +89,42 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
   // whole document is scanned. HOSTNAME and IPv4 tokens are specific enough
   // to the equipment table in the supplied boleta format.
   const equipmentText = text;
-  const hostnames = Array.from(
-    equipmentText.matchAll(/HOSTNAME\s+([A-Z0-9_-]+)/gi),
-    (match) => match[1].toUpperCase(),
-  ).filter((value, index, values) => values.indexOf(value) === index);
+  const hostnameMatches = Array.from(equipmentText.matchAll(/HOSTNAME\s*:?\s+([A-Z0-9_-]+)/gi));
+  const hostnames = hostnameMatches.map((match) => match[1].toUpperCase());
   const ips = Array.from(
     equipmentText.matchAll(/\b((?:\d{1,3}\.){3}\d{1,3})\b/g),
     (match) => match[1],
   );
-  const serials = Array.from(
-    equipmentText.matchAll(/No\.\s*Serie\s+(\d{5,})/gi),
-    (match) => match[1],
+  // Keep one entry per label, including blank values. Dropping blanks shifts
+  // the identifiers of later boxes onto boxes without a certificadora.
+  const serialPattern = /\bNo\.?\s*(?:de\s+)?Serie\b\s*:?\s*(\d{5,})?/gi;
+  const datamatrixPattern = /\bDATAMATRIX\b\s*:?\s*(GTC[A-Z0-9-]+)?/gi;
+  const serials = Array.from(equipmentText.matchAll(serialPattern), (match) => match[1] || '');
+  const datamatrices = Array.from(equipmentText.matchAll(datamatrixPattern), (match) => match[1]?.toUpperCase() || '');
+
+  const stationBlocks = hostnameMatches.map((match, index) =>
+    equipmentText.slice(match.index, hostnameMatches[index + 1]?.index),
   );
-  const datamatrices = Array.from(
-    equipmentText.matchAll(/DATAMATRIX\s+(GTC[A-Z0-9-]+)/gi),
-    (match) => match[1].toUpperCase(),
+  // When PDF text is ordered by station, use its own block even if the serial
+  // or DATAMATRIX label is absent. Column-ordered text uses the label slots.
+  const isStationOrdered = stationBlocks.length > 1 && stationBlocks.every((block) =>
+    /\b(?:\d{1,3}\.){3}\d{1,3}\b/.test(block),
   );
 
   const stationCount = Math.max(hostnames.length, ips.length);
   const stations = Array.from({ length: stationCount }, (_, index) => {
     const hostname = hostnames[index] || '';
+    const block = isStationOrdered ? stationBlocks[index] : undefined;
     return {
       hostname,
-      ip: ips[index] || '',
+      ip: block === undefined ? ips[index] || '' : block.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0] || '',
       label: stationLabelFromHostname(hostname, index),
-      serial: serials[index] || '',
-      datamatrix: datamatrices[index] || '',
+      serial: block === undefined || serials.length === hostnames.length
+        ? serials[index] || ''
+        : Array.from(block.matchAll(serialPattern))[0]?.[1] || '',
+      datamatrix: block === undefined || datamatrices.length === hostnames.length
+        ? datamatrices[index] || ''
+        : Array.from(block.matchAll(datamatrixPattern))[0]?.[1]?.toUpperCase() || '',
     };
   });
 
@@ -123,8 +137,8 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
   if (hostnames.length !== ips.length) {
     warnings.push('La cantidad de hostnames e IP no coincide. Revisa las estaciones antes de continuar.');
   }
-  if (stations.length && (serials.length !== stations.length || datamatrices.length !== stations.length)) {
-    warnings.push('Hay estaciones sin número de serie o código DATAMATRIX en la boleta; se mostrarán como no especificadas.');
+  if (stations.some((station) => hasCertificadora(station) && (!station.serial || !station.datamatrix))) {
+    warnings.push('Hay certificadoras con solo número de serie o código DATAMATRIX. Revisa el dato faltante; estas estaciones sí requieren fotografías.');
   }
 
   return { agencyCode, agencyName, stations, warnings };

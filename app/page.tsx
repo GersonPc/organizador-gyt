@@ -8,6 +8,7 @@ import {
   agencyFolderName,
   cleanSegment,
   extensionOf,
+  hasCertificadora,
   parseBoletaText,
   photoOutputName,
   stationParts,
@@ -149,6 +150,7 @@ export default function Home() {
   const [agencyCode, setAgencyCode] = useState('');
   const [agencyName, setAgencyName] = useState('');
   const [stations, setStations] = useState<Station[]>([]);
+  const [excludedStationLabels, setExcludedStationLabels] = useState<string[]>([]);
   const [cableFiles, setCableFiles] = useState<File[]>([]);
   const [documents, setDocuments] = useState<DocumentFiles>(blankDocuments);
   const [cableDragging, setCableDragging] = useState(false);
@@ -169,7 +171,7 @@ export default function Home() {
     pdfFile &&
       agencyCode.trim() &&
       agencyName.trim() &&
-      stations.length &&
+      (stations.length > 0 || excludedStationLabels.length > 0) &&
       requiredReady === requiredTotal &&
       validStationCount === stations.length,
   );
@@ -184,6 +186,7 @@ export default function Home() {
     if (!file) return;
     setPdfFile(file);
     setDocuments(blankDocuments());
+    setExcludedStationLabels([]);
     setParsing(true);
     setWarnings([]);
     setMessage('');
@@ -201,8 +204,10 @@ export default function Home() {
       const parsed = parseBoletaText(pageTexts.join(' '), file.name);
       setAgencyCode(parsed.agencyCode);
       setAgencyName(parsed.agencyName);
+      const withCertificadora = parsed.stations.filter(hasCertificadora);
+      setExcludedStationLabels(parsed.stations.filter((station) => !hasCertificadora(station)).map((station) => station.label));
       setStations(
-        parsed.stations.map((station) => ({
+        withCertificadora.map((station) => ({
           ...station,
           id: crypto.randomUUID(),
           files: blankFiles(),
@@ -210,8 +215,10 @@ export default function Home() {
       );
       setWarnings(parsed.warnings);
       setMessage(
-        parsed.stations.length
-          ? `${parsed.stations.length} estaciones detectadas. Revisa los datos antes de asignar fotos.`
+        withCertificadora.length
+          ? `${withCertificadora.length} estaciones con certificadora. Revisa los datos antes de asignar fotos.`
+          : parsed.stations.length
+            ? 'Las cajas detectadas no tienen número de serie ni código DATAMATRIX. Puedes descargar el ZIP sin fotografías de certificadoras.'
           : 'Agrega las estaciones manualmente.',
       );
     } catch {
@@ -267,8 +274,8 @@ export default function Home() {
   };
 
   const addStation = () => {
-    const numbers = stations
-      .map((station) => Number(station.label.match(/\d+/)?.[0]))
+    const numbers = [...stations.map((station) => station.label), ...excludedStationLabels]
+      .map((label) => Number(label.match(/\d+/)?.[0]))
       .filter((number) => Number.isFinite(number));
     const next = numbers.length ? Math.max(...numbers) + 1 : 1;
     setStations((current) => [...current, newStation(`CAJA ${next}`)]);
@@ -295,6 +302,7 @@ export default function Home() {
     setAgencyCode('');
     setAgencyName('');
     setStations([]);
+    setExcludedStationLabels([]);
     setCableFiles([]);
     setDocuments(blankDocuments());
     setWarnings([]);
@@ -448,11 +456,17 @@ export default function Home() {
             <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-[#8a909c]">2 · Evidencias</p>
-                <h2 className="mt-1 text-2xl font-black tracking-[-0.03em]">Estaciones detectadas</h2>
-                <p className="mt-1 text-sm text-[#717885]">Carga rápida: selecciona 1) certificadora, 2) serie y 3) ubicación. El cableado se carga aparte.</p>
+                <h2 className="mt-1 text-2xl font-black tracking-[-0.03em]">Estaciones con certificadora</h2>
+                {stations.length > 0 && <p className="mt-1 text-sm text-[#717885]">Carga rápida: selecciona 1) certificadora, 2) serie y 3) ubicación. El cableado se carga aparte.</p>}
               </div>
               <button type="button" onClick={addStation} className="rounded-xl border border-[#c9c7c0] bg-white px-4 py-2.5 text-sm font-bold shadow-sm hover:border-[#172033]">+ Agregar estación</button>
             </div>
+
+            {excludedStationLabels.length > 0 && (
+              <p className="mb-4 rounded-xl border border-[#d9d7d0] bg-[#faf9f6] px-4 py-3 text-sm leading-6 text-[#626a78]">
+                <strong>Sin certificadora:</strong> {excludedStationLabels.join(', ')}. No tienen número de serie ni código DATAMATRIX y no requieren fotografías.
+              </p>
+            )}
 
             <div className="grid gap-5 xl:grid-cols-2">
               {stations.map((station, stationIndex) => (
@@ -594,7 +608,7 @@ export default function Home() {
                 <p className="mt-1 truncate font-black">{outputName}.zip</p>
                 <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías obligatorias · {cableFiles.length} de cableado · {documentsReady} documento{documentsReady === 1 ? '' : 's'} opcional{documentsReady === 1 ? '' : 'es'}</p>
                 <div className="mt-2 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-[#ebe9e3]">
-                  <div className="h-full rounded-full bg-[#d7193f] transition-all" style={{ width: `${requiredTotal ? (requiredReady / requiredTotal) * 100 : 0}%` }} />
+                  <div className="h-full rounded-full bg-[#d7193f] transition-all" style={{ width: `${requiredTotal ? (requiredReady / requiredTotal) * 100 : canGenerate ? 100 : 0}%` }} />
                 </div>
               </div>
               <button type="button" disabled={!canGenerate || generating} onClick={generateZip} className="shrink-0 rounded-xl bg-[#d7193f] px-6 py-3.5 text-sm font-black text-white shadow-[0_8px_22px_rgba(215,25,63,0.25)] transition hover:bg-[#b91435] disabled:cursor-not-allowed disabled:bg-[#b8b5ae] disabled:shadow-none">
