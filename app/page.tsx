@@ -406,7 +406,7 @@ export default function Home() {
         <div className="mb-8 grid gap-6 lg:grid-cols-[1fr_420px] lg:items-end">
           <div>
             <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-[#d7193f]">Etapa 1 · Preparar agencia</p>
-            <h1 className="max-w-3xl text-3xl font-black leading-tight tracking-[-0.04em] sm:text-5xl">Fotografías ordenadas, sin perder calidad.</h1>
+            <h1 className="max-w-3xl text-3xl font-black leading-tight tracking-[-0.04em] sm:text-5xl">Fotografias para el informe ordenadas sin tanto que hacer</h1>
             <p className="mt-4 max-w-2xl leading-7 text-[#626a78]">Lee la boleta, asigna tres evidencias por estación y descarga una carpeta ZIP lista para entregar.</p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center text-xs">
