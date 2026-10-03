@@ -1,5 +1,25 @@
-export type RequiredPhotoRole = 'certificadora' | 'serie' | 'ubicacion';
+import type JSZip from 'jszip';
+
+export type RequiredPhotoRole = 'certificadora' | 'serie' | 'ubicacion' | 'inventario' | 'ubicacionInventario';
 export type PhotoRole = RequiredPhotoRole | 'cableado';
+export type StationPhotoFiles = Record<RequiredPhotoRole, File | null>;
+
+export function requiredPhotoRoles(separateIdentifiers = false): RequiredPhotoRole[] {
+  return separateIdentifiers
+    ? ['certificadora', 'serie', 'ubicacion', 'inventario', 'ubicacionInventario']
+    : ['certificadora', 'serie', 'ubicacion'];
+}
+
+export function photoRoleLabel(role: RequiredPhotoRole, separateIdentifiers = false) {
+  const labels: Record<RequiredPhotoRole, string> = {
+    certificadora: 'Fotografía certificadora',
+    serie: separateIdentifiers ? 'No. de serie' : 'No. serie y código DATAMATRIX',
+    ubicacion: separateIdentifiers ? 'Ubicación del No. de serie' : 'Ubicación, serie y DATAMATRIX',
+    inventario: 'No. de inventario / código DATAMATRIX',
+    ubicacionInventario: 'Ubicación del inventario / DATAMATRIX',
+  };
+  return labels[role];
+}
 
 export type ParsedStation = {
   hostname: string;
@@ -149,17 +169,49 @@ export function extensionOf(fileName: string) {
   return match?.[1] || '';
 }
 
-export function photoOutputName(label: string, ip: string, role: RequiredPhotoRole, originalName: string) {
+export function photoOutputName(label: string, ip: string, role: RequiredPhotoRole, originalName: string, separateIdentifiers = false) {
   const { prefix } = stationParts(label);
   const safeIp = cleanSegment(ip, 'SIN_IP');
   const suffix: Record<RequiredPhotoRole, string> = {
     certificadora: 'Fotografia Certificadora',
-    serie: 'Fotografia No. Serie y Código DATAMATRIX',
-    ubicacion: 'Fotografia Ubicación No. Serie y Código DATAMATRIX',
+    serie: `Fotografia No. Serie y Código DATAMATRIX${separateIdentifiers ? ' 1' : ''}`,
+    ubicacion: `Fotografia Ubicación No. Serie y Código DATAMATRIX${separateIdentifiers ? ' 1' : ''}`,
+    inventario: 'Fotografia No. Serie y Código DATAMATRIX 2',
+    ubicacionInventario: 'Fotografia Ubicación No. Serie y Código DATAMATRIX 2',
   };
   return `${prefix}_IP_${safeIp} ${suffix[role]}${extensionOf(originalName)}`;
 }
 
 export function agencyFolderName(code: string, name: string) {
   return `AGENCIA ${cleanSegment(code, 'SIN CODIGO')} ${cleanSegment(name.toUpperCase(), 'SIN NOMBRE')}`;
+}
+
+export async function addPhotosToZip(
+  zip: JSZip,
+  stations: { label: string; ip: string; separateIdentifiers?: boolean; files: StationPhotoFiles }[],
+  cableFiles: File[],
+) {
+  const entries: { name: string; file: File }[] = [];
+  for (const station of stations) {
+    for (const role of requiredPhotoRoles(station.separateIdentifiers)) {
+      const file = station.files[role];
+      if (file) entries.push({
+        name: photoOutputName(station.label, station.ip, role, file.name, station.separateIdentifiers),
+        file,
+      });
+    }
+  }
+  cableFiles.forEach((file, index) => entries.push({ name: `Estado Cableado ${index + 1}${extensionOf(file.name)}`, file }));
+
+  const names = new Set(Object.keys(zip.files).map((name) => name.normalize('NFC').toLowerCase()));
+  for (const { name } of entries) {
+    const normalized = name.normalize('NFC').toLowerCase();
+    if (names.has(normalized)) {
+      throw new Error(`Hay archivos con el mismo nombre: «${name}». Revisa las ubicaciones, las IP y los nombres de los documentos para evitar sobrescribirlos.`);
+    }
+    names.add(normalized);
+  }
+  for (const { name, file } of entries) {
+    zip.file(name, await file.arrayBuffer(), { binary: true, compression: 'STORE', createFolders: false });
+  }
 }

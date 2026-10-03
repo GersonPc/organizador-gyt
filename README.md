@@ -2,7 +2,9 @@
 
 Aplicación de navegador para ordenar fotografías de certificadoras y descargar un ZIP por agencia. Las fotos y el PDF se procesan localmente; no se envían a un servidor ni se guardan en una base de datos. Las imágenes conservan sus bytes originales.
 
-La boleta del primer paso se usa solo para leer las cajas y sus identificadores; no se incluye en el ZIP. Los tres documentos opcionales (boleta firmada, informe firmado e informe en Word) se guardan en la raíz del ZIP con su nombre original. Las fotografías conservan sus carpetas por agencia. Si falta algún documento, un aviso permite continuar al pulsar Aceptar.
+La boleta del primer paso se usa solo para leer las cajas y sus identificadores; no se incluye en el ZIP. Todos los archivos se guardan directamente en la raíz del ZIP, sin carpetas internas. El ZIP conserva el nombre `AGENCIA [código] [nombre]`; las fotografías conservan la caja y la IP en su nombre y el cableado se numera como `Estado Cableado 1`, `Estado Cableado 2`, etc. Los tres documentos opcionales (boleta firmada, informe firmado e informe en Word) conservan su nombre original. Si falta algún documento, un aviso permite continuar al pulsar Aceptar.
+
+Cada estación usa tres fotos de forma predeterminada. El interruptor **5 fotos** permite documentar la serie y el inventario/DATAMATRIX por separado: 1) certificadora, 2) número de serie, 3) ubicación de la serie, 4) inventario/DATAMATRIX y 5) ubicación del inventario/DATAMATRIX. Los archivos conservan los nombres originales: en el modo de cinco fotos, las dos evidencias de serie/DATAMATRIX y las dos de ubicación se distinguen con `1` y `2` antes de la extensión; en el modo de tres fotos no llevan esos números. La carga rápida y los contadores se adaptan a la opción seleccionada. Al volver a tres fotos, las dos adicionales se conservan durante la sesión para poder reactivar la opción, pero se excluyen del ZIP.
 
 ## Desarrollo para Cloudflare
 

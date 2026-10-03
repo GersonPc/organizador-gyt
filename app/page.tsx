@@ -1,19 +1,19 @@
 'use client';
 
 import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
-import type { RequiredPhotoRole } from './organizer';
+import type { RequiredPhotoRole, StationPhotoFiles } from './organizer';
 import { addDocumentsToZip, blankDocuments, DOCUMENT_SLOTS, documentFileError, documentNamesError, missingDocumentsWarning } from './documents';
 import type { DocumentFiles, DocumentRole } from './documents';
 import {
   agencyFolderName,
-  extensionOf,
+  addPhotosToZip,
   hasCertificadora,
   parseBoletaText,
   photoOutputName,
-  stationParts,
+  photoRoleLabel,
+  requiredPhotoRoles,
 } from './organizer';
 
-type StationFiles = Record<RequiredPhotoRole, File | null>;
 type Station = {
   id: string;
   hostname: string;
@@ -21,20 +21,15 @@ type Station = {
   label: string;
   serial: string;
   datamatrix: string;
-  files: StationFiles;
+  files: StationPhotoFiles;
+  separateIdentifiers?: boolean;
   collapsed?: boolean;
 };
 
-const REQUIRED_ROLES: RequiredPhotoRole[] = ['certificadora', 'serie', 'ubicacion'];
-const ROLE_LABELS: Record<RequiredPhotoRole, string> = {
-  certificadora: 'Fotografía certificadora',
-  serie: 'No. serie y código DATAMATRIX',
-  ubicacion: 'Ubicación, serie y DATAMATRIX',
-};
 const FILE_ACCEPT = '.heic,.heif,.jpg,.jpeg,.png,image/heic,image/heif,image/jpeg,image/png';
 
-function blankFiles(): StationFiles {
-  return { certificadora: null, serie: null, ubicacion: null };
+function blankFiles(): StationPhotoFiles {
+  return { certificadora: null, serie: null, ubicacion: null, inventario: null, ubicacionInventario: null };
 }
 
 function formatBytes(bytes: number) {
@@ -160,10 +155,10 @@ export default function Home() {
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  const requiredTotal = stations.length * REQUIRED_ROLES.length;
+  const requiredTotal = stations.reduce((total, station) => total + requiredPhotoRoles(station.separateIdentifiers).length, 0);
   const documentsReady = DOCUMENT_SLOTS.filter((slot) => documents[slot.role]).length;
   const requiredReady = stations.reduce(
-    (total, station) => total + REQUIRED_ROLES.filter((role) => station.files[role]).length,
+    (total, station) => total + requiredPhotoRoles(station.separateIdentifiers).filter((role) => station.files[role]).length,
     0,
   );
   const validStationCount = stations.filter((station) => station.ip.trim() && station.label.trim()).length;
@@ -238,7 +233,7 @@ export default function Home() {
       current.map((station) => {
         if (station.id !== id) return station;
         const files = { ...station.files, [role]: file };
-        return { ...station, files, collapsed: REQUIRED_ROLES.every((requiredRole) => files[requiredRole]) };
+        return { ...station, files, collapsed: requiredPhotoRoles(station.separateIdentifiers).every((requiredRole) => files[requiredRole]) };
       }),
     );
     setMessage('');
@@ -249,12 +244,15 @@ export default function Home() {
     setMessage('');
   };
 
-  const assignThree = (id: string, fileList: FileList | null) => {
+  const assignPhotos = (id: string, fileList: FileList | null) => {
+    const station = stations.find((item) => item.id === id);
+    if (!station || !fileList?.length) return;
+    const roles = requiredPhotoRoles(station.separateIdentifiers);
     const files = Array.from(fileList || []).sort((a, b) =>
       a.name.localeCompare(b.name, 'es', { numeric: true, sensitivity: 'base' }),
     );
-    if (files.length !== 3) {
-      setMessage('La carga rápida requiere exactamente tres fotografías, nombradas u ordenadas como 1, 2 y 3.');
+    if (files.length !== roles.length) {
+      setMessage(`La carga rápida requiere exactamente ${roles.length} fotografías, nombradas en orden del 1 al ${roles.length}.`);
       return;
     }
     setStations((current) =>
@@ -265,15 +263,13 @@ export default function Home() {
               collapsed: true,
               files: {
                 ...station.files,
-                certificadora: files[0],
-                serie: files[1],
-                ubicacion: files[2],
+                ...Object.fromEntries(roles.map((role, index) => [role, files[index]])),
               },
             }
           : station,
       ),
     );
-    setMessage('Las tres fotografías se asignaron en orden 1, 2 y 3. Puedes reemplazar cualquiera antes de descargar.');
+    setMessage(`Las ${roles.length} fotografías se asignaron en orden del 1 al ${roles.length}. Puedes reemplazar cualquiera antes de descargar.`);
   };
 
   const addStation = () => {
@@ -316,7 +312,7 @@ export default function Home() {
   const generateZip = async () => {
     if (generating) return;
     if (!canGenerate || !pdfFile) {
-      setMessage('Completa los datos y las tres fotografías obligatorias de cada estación.');
+      setMessage('Completa los datos y las 3 o 5 fotografías de cada estación, según la opción seleccionada.');
       return;
     }
 
@@ -334,32 +330,8 @@ export default function Home() {
     try {
       const JSZip = (await import('jszip')).default;
       const zip = new JSZip();
-      const root = zip.folder(outputName);
-      if (!root) throw new Error('No se pudo crear la carpeta principal.');
-
       await addDocumentsToZip(zip, documents);
-      const cableFolder = root.folder('ESTADO CABLEADO');
-
-      stations.forEach((station) => {
-        const parts = stationParts(station.label);
-        const stationFolder = root.folder(parts.folder);
-        REQUIRED_ROLES.forEach((role) => {
-          const file = station.files[role];
-          if (file) {
-            stationFolder?.file(photoOutputName(station.label, station.ip, role, file.name), file, {
-              binary: true,
-              compression: 'STORE',
-            });
-          }
-        });
-      });
-
-      cableFiles.forEach((file, index) => {
-        cableFolder?.file(`${index + 1}${extensionOf(file.name)}`, file, {
-          binary: true,
-          compression: 'STORE',
-        });
-      });
+      await addPhotosToZip(zip, stations, cableFiles);
 
       const blob = await zip.generateAsync(
         { type: 'blob', compression: 'STORE', streamFiles: true },
@@ -374,9 +346,9 @@ export default function Home() {
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       setProgress(100);
-      setMessage('ZIP generado correctamente. Los archivos conservaron su contenido original y los documentos adjuntos conservaron sus nombres.');
-    } catch {
-      setMessage('No fue posible generar el ZIP. Revisa los archivos e inténtalo nuevamente.');
+      setMessage('ZIP generado correctamente, sin carpetas internas. Los archivos conservaron su contenido original y los documentos adjuntos conservaron sus nombres.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No fue posible generar el ZIP. Revisa los archivos e inténtalo nuevamente.');
     } finally {
       setGenerating(false);
     }
@@ -407,7 +379,7 @@ export default function Home() {
           <div>
             <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-[#d7193f]">Etapa 1 · Preparar agencia</p>
             <h1 className="max-w-3xl text-3xl font-black leading-tight tracking-[-0.04em] sm:text-5xl">Fotografias para el informe ordenadas sin tanto que hacer</h1>
-            <p className="mt-4 max-w-2xl leading-7 text-[#626a78]">Lee la boleta, asigna tres evidencias por estación y descarga una carpeta ZIP lista para entregar.</p>
+            <p className="mt-4 max-w-2xl leading-7 text-[#626a78]">Lee la boleta, asigna 3 o 5 evidencias por estación y descarga un ZIP sin carpetas internas, listo para entregar.</p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center text-xs">
             {['1. Boleta', '2. Evidencias', '3. ZIP'].map((step, index) => {
@@ -463,7 +435,7 @@ export default function Home() {
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.14em] text-[#8a909c]">2 · Evidencias</p>
                 <h2 className="mt-1 text-2xl font-black tracking-[-0.03em]">Estaciones con certificadora</h2>
-                {stations.length > 0 && <p className="mt-1 text-sm text-[#717885]">Carga rápida: selecciona 1) certificadora, 2) serie y 3) ubicación. El cableado se carga aparte.</p>}
+                {stations.length > 0 && <p className="mt-1 text-sm text-[#717885]">Carga 3 fotos por estación. Activa 5 fotos cuando la serie y el inventario/DATAMATRIX estén separados. El cableado se carga aparte.</p>}
               </div>
               <button type="button" onClick={addStation} className="rounded-xl border border-[#c9c7c0] bg-white px-4 py-2.5 text-sm font-bold shadow-sm hover:border-[#172033]">+ Agregar estación</button>
             </div>
@@ -494,9 +466,25 @@ export default function Home() {
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">
-                      <span className={`text-xs font-bold ${REQUIRED_ROLES.every((role) => station.files[role]) ? 'text-[#17663f]' : 'text-[#717885]'}`} aria-live="polite">
-                        {REQUIRED_ROLES.filter((role) => station.files[role]).length}/3 fotos
+                      <span className={`text-xs font-bold ${requiredPhotoRoles(station.separateIdentifiers).every((role) => station.files[role]) ? 'text-[#17663f]' : 'text-[#717885]'}`} aria-live="polite">
+                        {requiredPhotoRoles(station.separateIdentifiers).filter((role) => station.files[role]).length}/{requiredPhotoRoles(station.separateIdentifiers).length} fotos
                       </span>
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={Boolean(station.separateIdentifiers)}
+                        aria-label={`5 fotos: serie e inventario separados en ${station.label || 'estación'}`}
+                        onClick={() => {
+                          updateStation(station.id, { separateIdentifiers: !station.separateIdentifiers, collapsed: false });
+                          setMessage('');
+                        }}
+                        className="flex items-center gap-2 rounded-lg border border-[#d8d6cf] bg-white px-2 py-1.5 text-xs font-bold hover:border-[#172033] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d7193f]"
+                      >
+                        <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${station.separateIdentifiers ? 'bg-[#d7193f]' : 'bg-[#b8b5ae]'}`} aria-hidden="true">
+                          <span className={`absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${station.separateIdentifiers ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+                        </span>
+                        5 fotos
+                      </button>
                       <button
                         type="button"
                         aria-expanded={!station.collapsed}
@@ -522,18 +510,21 @@ export default function Home() {
                     </div>
 
                     <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-[#172033] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#26324a]">
-                      <span>Cargar las 3 fotos en orden 1–2–3</span>
+                      <span>Cargar las {requiredPhotoRoles(station.separateIdentifiers).length} fotos en orden {station.separateIdentifiers ? '1–2–3–4–5' : '1–2–3'}</span>
                       <span className="rounded-md bg-white/12 px-2 py-1 text-xs">Elegir</span>
-                      <input className="sr-only" type="file" accept={FILE_ACCEPT} multiple onChange={(event) => assignThree(station.id, event.target.files)} />
+                      <input className="sr-only" type="file" accept={FILE_ACCEPT} multiple onChange={(event) => {
+                        assignPhotos(station.id, event.target.files);
+                        event.target.value = '';
+                      }} />
                     </label>
 
                     <div className="mt-3 grid gap-2">
-                      {REQUIRED_ROLES.map((role) => (
-                        <FileSlot key={role} label={ROLE_LABELS[role]} file={station.files[role]} onFile={(file) => updateFile(station.id, role, file)} />
+                      {requiredPhotoRoles(station.separateIdentifiers).map((role, index) => (
+                        <FileSlot key={role} label={`${index + 1}. ${photoRoleLabel(role, station.separateIdentifiers)}`} file={station.files[role]} onFile={(file) => updateFile(station.id, role, file)} />
                       ))}
                     </div>
 
-                    {station.ip && REQUIRED_ROLES.some((role) => station.files[role]) && (
+                    {station.ip && requiredPhotoRoles(station.separateIdentifiers).some((role) => station.files[role]) && (
                       <div className="mt-4 rounded-xl bg-[#f4f3ef] p-3 text-[11px] leading-5 text-[#646b78]">
                         <strong className="block text-[#333c4e]">Ejemplo de nombre final</strong>
                         {photoOutputName(station.label, station.ip, 'certificadora', station.files.certificadora?.name || 'foto.jpg')}
@@ -549,7 +540,7 @@ export default function Home() {
                 <div>
                   <p className="mb-2 text-sm font-bold text-[#d7193f]">Documentos opcionales</p>
                   <h3 className="text-xl font-black tracking-[-0.025em]">Documentos firmados y archivo Word</h3>
-                  <p className="mt-2 text-sm leading-6 text-[#717885]">Puedes adjuntar solo los documentos que tengas. Se incluyen en la raíz del ZIP, fuera de las carpetas y con su nombre original. Si falta alguno, aparecerá un aviso; pulsa Aceptar para generar el ZIP con los archivos disponibles.</p>
+                  <p className="mt-2 text-sm leading-6 text-[#717885]">Puedes adjuntar solo los documentos que tengas. Se incluyen directamente en el ZIP con su nombre original. Si falta alguno, aparecerá un aviso; pulsa Aceptar para generar el ZIP con los archivos disponibles.</p>
                   <p className="mt-1 text-sm text-[#717885]">Firmados: PDF o imagen. Word: .doc o .docx.</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-[#f4f3ef] px-3 py-1.5 text-sm font-bold text-[#505867]" aria-live="polite">{documentsReady} documento{documentsReady === 1 ? '' : 's'} adjunto{documentsReady === 1 ? '' : 's'}</span>
@@ -573,7 +564,7 @@ export default function Home() {
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.14em] text-[#d7193f]">Estado de cableado · Opcional</p>
                   <h3 className="mt-2 text-xl font-black tracking-[-0.025em]">Todas las fotos en un solo lugar</h3>
-                  <p className="mt-2 text-sm leading-6 text-[#717885]">Selecciona o arrastra todas las fotografías de cableado juntas. Se guardarán numeradas dentro de la carpeta <strong>ESTADO CABLEADO</strong>.</p>
+                  <p className="mt-2 text-sm leading-6 text-[#717885]">Selecciona o arrastra todas las fotografías de cableado juntas. Se guardarán directamente en el ZIP como <strong>Estado Cableado 1, Estado Cableado 2…</strong></p>
                 </div>
 
                 <div>
