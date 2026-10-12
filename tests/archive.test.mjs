@@ -18,7 +18,7 @@ const station = (label, separateIdentifiers = false) => ({
   },
 });
 
-test('a mixed agency exports all photos, cables and documents without any directories', async () => {
+test('a mixed agency groups photos by box and keeps cables and documents at the ZIP root', async () => {
   const zip = new JSZip();
   const documents = {
     boleta: new File(['signed receipt'], 'Boleta firmada.pdf'),
@@ -34,19 +34,20 @@ test('a mixed agency exports all photos, cables and documents without any direct
   assert.equal(agencyFolderName('539', 'Portales'), 'AGENCIA 539 PORTALES');
   assert.deepEqual(Object.keys(saved.files).sort(), [
     'Boleta firmada.pdf', 'Informe firmado.pdf', 'Informe.docx',
-    'Caja1_IP_10.0.0.1 Fotografia Certificadora.JPG',
-    'Caja1_IP_10.0.0.1 Fotografia No. Serie y Código DATAMATRIX.heic',
-    'Caja1_IP_10.0.0.1 Fotografia Ubicación No. Serie y Código DATAMATRIX.png',
-    'Caja2_IP_10.0.0.1 Fotografia Certificadora.JPG',
-    'Caja2_IP_10.0.0.1 Fotografia No. Serie y Código DATAMATRIX 1.heic',
-    'Caja2_IP_10.0.0.1 Fotografia Ubicación No. Serie y Código DATAMATRIX 1.png',
-    'Caja2_IP_10.0.0.1 Fotografia No. Serie y Código DATAMATRIX 2.jpg',
-    'Caja2_IP_10.0.0.1 Fotografia Ubicación No. Serie y Código DATAMATRIX 2.heif',
+    'CAJA 1/',
+    'CAJA 1/Caja1_IP_10.0.0.1 Fotografia Certificadora.JPG',
+    'CAJA 1/Caja1_IP_10.0.0.1 Fotografia No. Serie y Código DATAMATRIX.heic',
+    'CAJA 1/Caja1_IP_10.0.0.1 Fotografia Ubicación No. Serie y Código DATAMATRIX.png',
+    'CAJA 2/',
+    'CAJA 2/Caja2_IP_10.0.0.1 Fotografia Certificadora.JPG',
+    'CAJA 2/Caja2_IP_10.0.0.1 Fotografia No. Serie y Código DATAMATRIX 1.heic',
+    'CAJA 2/Caja2_IP_10.0.0.1 Fotografia Ubicación No. Serie y Código DATAMATRIX 1.png',
+    'CAJA 2/Caja2_IP_10.0.0.1 Fotografia No. Serie y Código DATAMATRIX 2.jpg',
+    'CAJA 2/Caja2_IP_10.0.0.1 Fotografia Ubicación No. Serie y Código DATAMATRIX 2.heif',
     'Estado Cableado 1.jpg', 'Estado Cableado 2.heic',
   ].sort());
   for (const entry of Object.values(saved.files)) {
-    assert.equal(entry.dir, false);
-    assert.equal(entry.name.includes('/'), false);
+    if (entry.dir) continue;
     const document = Object.values(documents).find((file) => file.name === entry.name);
     assert.deepEqual(await entry.async('uint8array'), document ? new Uint8Array(await document.arrayBuffer()) : photoBytes);
   }
@@ -58,7 +59,8 @@ test('switching back to three photos excludes retained extra images from the ZIP
     item.separateIdentifiers = separateIdentifiers;
     const zip = new JSZip();
     await addPhotosToZip(zip, [item], []);
-    assert.equal(Object.keys(zip.files).length, count);
+    assert.equal(Object.values(zip.files).filter((entry) => !entry.dir).length, count);
+    assert.ok(Object.keys(zip.files).every((name) => name.startsWith('CAJA AUTOBANCO/')));
     assert.equal(Object.keys(zip.files).some((name) => / [12]\.(heic|png|jpg|heif)$/.test(name)), separateIdentifiers);
   }
 });
@@ -71,13 +73,13 @@ test('a ZIP without certificadoras or cable photos creates no empty folders', as
   assert.deepEqual(Object.keys(saved.files), []);
 });
 
-test('flattening cannot silently overwrite another station or an original document', async () => {
+test('box photos and cables cannot silently overwrite existing files', async () => {
   const zip = new JSZip();
   await assert.rejects(addPhotosToZip(zip, [station('CAJA 1'), station('CAJA 01')], []), /mismo nombre/);
   assert.deepEqual(Object.keys(zip.files), []);
-  const original = new File(['signed document'], 'CAJA1_IP_10.0.0.1 FOTOGRAFIA CERTIFICADORA.JPG');
+  const original = new File(['signed document'], 'ESTADO CABLEADO 1.JPG');
   zip.file(original.name, await original.arrayBuffer());
-  await assert.rejects(addPhotosToZip(zip, [station('CAJA 1')], []), /mismo nombre/);
+  await assert.rejects(addPhotosToZip(zip, [station('CAJA 1')], [new File([photoBytes], 'cable.jpg')]), /mismo nombre/);
   assert.deepEqual(Object.keys(zip.files), [original.name]);
   assert.equal(await zip.file(original.name).async('string'), 'signed document');
 });

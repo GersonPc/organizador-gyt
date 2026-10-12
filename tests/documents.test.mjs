@@ -9,9 +9,9 @@ const documents = () => ({
   word: new File([new Uint8Array([80, 75, 3, 4, 255])], 'Finalización original.docx'),
 });
 
-test('documents keep their original names and bytes at the ZIP root beside photos', async () => {
+test('documents keep their original names and bytes at the ZIP root beside photo folders', async () => {
   const zip = new JSZip();
-  const photoPath = 'Caja1_IP_10.0.0.1 Fotografia Certificadora.jpg';
+  const photoPath = 'CAJA 1/Caja1_IP_10.0.0.1 Fotografia Certificadora.jpg';
   const photo = new Uint8Array([255, 216, 255, 0]);
   zip.file(photoPath, photo);
   const files = documents();
@@ -23,7 +23,7 @@ test('documents keep their original names and bytes at the ZIP root beside photo
     assert.deepEqual(await saved.file(file.name).async('uint8array'), new Uint8Array(await file.arrayBuffer()));
   }
   assert.deepEqual(await saved.file(photoPath).async('uint8array'), photo);
-  assert.equal(Object.values(saved.files).some((entry) => entry.dir || entry.name.includes('/')), false);
+  assert.deepEqual(Object.values(saved.files).filter((entry) => entry.dir).map((entry) => entry.name), ['CAJA 1/']);
 });
 
 test('any subset of optional documents can be included and the warning lists only missing files', async () => {

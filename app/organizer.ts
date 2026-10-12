@@ -196,7 +196,7 @@ export async function addPhotosToZip(
     for (const role of requiredPhotoRoles(station.separateIdentifiers)) {
       const file = station.files[role];
       if (file) entries.push({
-        name: photoOutputName(station.label, station.ip, role, file.name, station.separateIdentifiers),
+        name: `${stationParts(station.label).folder}/${photoOutputName(station.label, station.ip, role, file.name, station.separateIdentifiers)}`,
         file,
       });
     }
@@ -212,6 +212,6 @@ export async function addPhotosToZip(
     names.add(normalized);
   }
   for (const { name, file } of entries) {
-    zip.file(name, await file.arrayBuffer(), { binary: true, compression: 'STORE', createFolders: false });
+    zip.file(name, await file.arrayBuffer(), { binary: true, compression: 'STORE', createFolders: true });
   }
 }

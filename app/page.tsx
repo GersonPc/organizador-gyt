@@ -346,7 +346,7 @@ export default function Home() {
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       setProgress(100);
-      setMessage('ZIP generado correctamente, sin carpetas internas. Los archivos conservaron su contenido original y los documentos adjuntos conservaron sus nombres.');
+      setMessage('ZIP generado correctamente, con las fotografías en la carpeta de cada caja. Los archivos conservaron su contenido original y los documentos adjuntos conservaron sus nombres.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No fue posible generar el ZIP. Revisa los archivos e inténtalo nuevamente.');
     } finally {
@@ -379,7 +379,7 @@ export default function Home() {
           <div>
             <p className="mb-3 text-xs font-black uppercase tracking-[0.18em] text-[#d7193f]">Etapa 1 · Preparar agencia</p>
             <h1 className="max-w-3xl text-3xl font-black leading-tight tracking-[-0.04em] sm:text-5xl">Fotografias para el informe ordenadas sin tanto que hacer</h1>
-            <p className="mt-4 max-w-2xl leading-7 text-[#626a78]">Lee la boleta, asigna 3 o 5 evidencias por estación y descarga un ZIP sin carpetas internas, listo para entregar.</p>
+            <p className="mt-4 max-w-2xl leading-7 text-[#626a78]">Lee la boleta, asigna 3 o 5 evidencias por estación y descarga un ZIP con las fotografías organizadas en la carpeta de cada caja, listo para entregar.</p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center text-xs">
             {['1. Boleta', '2. Evidencias', '3. ZIP'].map((step, index) => {
