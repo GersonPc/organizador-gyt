@@ -201,7 +201,7 @@ export async function addPhotosToZip(
       });
     }
   }
-  cableFiles.forEach((file, index) => entries.push({ name: `Estado Cableado ${index + 1}${extensionOf(file.name)}`, file }));
+  cableFiles.forEach((file, index) => entries.push({ name: `CABLEADO/${index + 1}${extensionOf(file.name)}`, file }));
 
   const names = new Set(Object.keys(zip.files).map((name) => name.normalize('NFC').toLowerCase()));
   for (const { name } of entries) {

@@ -564,7 +564,7 @@ export default function Home() {
                 <div>
                   <p className="text-xs font-black uppercase tracking-[0.14em] text-[#d7193f]">Estado de cableado · Opcional</p>
                   <h3 className="mt-2 text-xl font-black tracking-[-0.025em]">Todas las fotos en un solo lugar</h3>
-                  <p className="mt-2 text-sm leading-6 text-[#717885]">Selecciona o arrastra todas las fotografías de cableado juntas. Se guardarán directamente en el ZIP como <strong>Estado Cableado 1, Estado Cableado 2…</strong></p>
+                  <p className="mt-2 text-sm leading-6 text-[#717885]">Selecciona o arrastra todas las fotografías de cableado juntas. Se guardarán dentro de la carpeta <strong>CABLEADO</strong> con nombres <strong>1, 2, 3…</strong> y su extensión original.</p>
                 </div>
 
                 <div>

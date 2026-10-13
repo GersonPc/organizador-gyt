@@ -18,7 +18,7 @@ const station = (label, separateIdentifiers = false) => ({
   },
 });
 
-test('a mixed agency groups photos by box and keeps cables and documents at the ZIP root', async () => {
+test('a mixed agency groups photos by box and cable photos in CABLEADO, with documents at the ZIP root', async () => {
   const zip = new JSZip();
   const documents = {
     boleta: new File(['signed receipt'], 'Boleta firmada.pdf'),
@@ -44,7 +44,7 @@ test('a mixed agency groups photos by box and keeps cables and documents at the 
     'CAJA 2/Caja2_IP_10.0.0.1 Fotografia Ubicación No. Serie y Código DATAMATRIX 1.png',
     'CAJA 2/Caja2_IP_10.0.0.1 Fotografia No. Serie y Código DATAMATRIX 2.jpg',
     'CAJA 2/Caja2_IP_10.0.0.1 Fotografia Ubicación No. Serie y Código DATAMATRIX 2.heif',
-    'Estado Cableado 1.jpg', 'Estado Cableado 2.heic',
+    'CABLEADO/', 'CABLEADO/1.jpg', 'CABLEADO/2.heic',
   ].sort());
   for (const entry of Object.values(saved.files)) {
     if (entry.dir) continue;
@@ -77,9 +77,9 @@ test('box photos and cables cannot silently overwrite existing files', async () 
   const zip = new JSZip();
   await assert.rejects(addPhotosToZip(zip, [station('CAJA 1'), station('CAJA 01')], []), /mismo nombre/);
   assert.deepEqual(Object.keys(zip.files), []);
-  const original = new File(['signed document'], 'ESTADO CABLEADO 1.JPG');
-  zip.file(original.name, await original.arrayBuffer());
+  const original = new File(['original photo'], 'CABLEADO/1.JPG');
+  zip.file(original.name, await original.arrayBuffer(), { createFolders: false });
   await assert.rejects(addPhotosToZip(zip, [station('CAJA 1')], [new File([photoBytes], 'cable.jpg')]), /mismo nombre/);
   assert.deepEqual(Object.keys(zip.files), [original.name]);
-  assert.equal(await zip.file(original.name).async('string'), 'signed document');
+  assert.equal(await zip.file(original.name).async('string'), 'original photo');
 });
