@@ -6,6 +6,10 @@ La boleta del primer paso se usa solo para leer las cajas y sus identificadores;
 
 Cada estación usa tres fotos de forma predeterminada. El interruptor **5 fotos** permite documentar la serie y el inventario/DATAMATRIX por separado: 1) certificadora, 2) número de serie, 3) ubicación de la serie, 4) inventario/DATAMATRIX y 5) ubicación del inventario/DATAMATRIX. Los archivos conservan los nombres originales: en el modo de cinco fotos, las dos evidencias de serie/DATAMATRIX y las dos de ubicación se distinguen con `1` y `2` antes de la extensión; en el modo de tres fotos no llevan esos números. La carga rápida y los contadores se adaptan a la opción seleccionada. Al volver a tres fotos, las dos adicionales se conservan durante la sesión para poder reactivar la opción, pero se excluyen del ZIP.
 
+Los nombres de carpeta se leen de los encabezados o campos de ubicación del PDF, incluyendo nombres como `CAJA REPORTES`. Si no hay un nombre reconocible, se usa `BACKUP` (o `BACKUP 2`, etc., si hay varias estaciones sin nombre). El nombre de carpeta, la IP, la serie y el DATAMATRIX se pueden corregir en cada estación. Una estación detectada de más puede excluirse del ZIP y volver a incluirse sin perder las fotos cargadas.
+
+Los datos faltantes, las fotos incompletas y los nombres repetidos se muestran en «Datos por revisar» y en un aviso antes de la descarga; no deshabilitan el botón. El usuario puede corregirlos o elegir «Descargar de todas formas» para incluir los archivos disponibles. Si falta la IP se usa `SIN_IP`; si faltan datos de agencia, el ZIP usa `SIN CODIGO` o `SIN NOMBRE`. Los archivos con nombres repetidos reciben un sufijo `(2)`, `(3)`, etc., antes de la extensión para conservarlos todos sin sobrescribirlos.
+
 ## Desarrollo para Cloudflare
 
 Requiere Node.js 22.13 o posterior y npm.

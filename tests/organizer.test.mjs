@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { hasCertificadora, parseBoletaText } from '../app/organizer.ts';
+import { hasCertificadora, parseBoletaText, stationParts } from '../app/organizer.ts';
 
 const filename = 'BOLETA DE SERVICIO AG539 PORTALES.pdf';
 const parse = (text) => parseBoletaText(text, filename);
@@ -70,4 +70,59 @@ test('all boxes without certificadoras remain distinguishable from a PDF with no
   assert.equal(emptyBoxes.stations.filter(hasCertificadora).length, 0);
   assert.equal(parse('Sin tabla de equipos').stations.length, 0);
   assert.equal(hasCertificadora({ serial: ' ', datamatrix: ' ' }), false);
+});
+
+test('custom box names come from PDF headings and override a numeric hostname', () => {
+  const result = parse(`
+    CAJA REPORTES
+    HOSTNAME AG539CAJA01 IP 10.0.0.1 No. Serie 123456 DATAMATRIX GTC-UNO
+    CAJA 2
+    HOSTNAME AG539CAJA02 IP 10.0.0.2 No. Serie 234567 DATAMATRIX GTC-DOS
+  `);
+  assert.deepEqual(result.stations.map((station) => station.label), ['CAJA REPORTES', 'CAJA 2']);
+  assert.equal(stationParts(result.stations[0].label).folder, 'CAJA REPORTES');
+});
+
+test('custom names are read from explicit location fields, compact hostnames and split hostname text', () => {
+  for (const [text, label] of [
+    ['HOSTNAME PC01 IP 10.0.0.1 Ubicación: Caja Reportes No. Serie 123456 DATAMATRIX GTC-UNO', 'CAJA REPORTES'],
+    ['Nombre de estación: Reportes HOSTNAME PC01 IP 10.0.0.1 No. Serie 123456 DATAMATRIX GTC-UNO', 'REPORTES'],
+    ['HOSTNAME AG539CAJAREPORTES IP 10.0.0.1 No. Serie 123456 DATAMATRIX GTC-UNO', 'CAJA REPORTES'],
+    ['HOSTNAME AG539CAJA_REPORTES_2 IP 10.0.0.1 No. Serie 123456 DATAMATRIX GTC-UNO', 'CAJA REPORTES 2'],
+    ['HOSTNAME AG539CAJA REPORTES IP 10.0.0.1 No. Serie 123456 DATAMATRIX GTC-UNO', 'CAJA REPORTES'],
+  ]) {
+    assert.equal(parse(text).stations[0].label, label, text);
+  }
+});
+
+test('names listed as a column stay associated with the matching station', () => {
+  const result = parse(`
+    CAJA REPORTES
+    CAJA 2
+    HOSTNAME PC01 HOSTNAME AG539CAJA02
+    10.0.0.1 10.0.0.2
+    No. Serie 123456 No. Serie 234567 DATAMATRIX GTC-UNO DATAMATRIX GTC-DOS
+  `);
+  assert.deepEqual(result.stations.map((station) => station.label), ['CAJA REPORTES', 'CAJA 2']);
+});
+
+test('unknown stations use BACKUP without changing custom names containing numbers', () => {
+  const result = parse('HOSTNAME PC01 IP 10.0.0.1 No. Serie 123456 DATAMATRIX GTC-UNO HOSTNAME PC02 IP 10.0.0.2 No. Serie 234567 DATAMATRIX GTC-DOS');
+  assert.deepEqual(result.stations.map((station) => station.label), ['BACKUP', 'BACKUP 2']);
+  assert.ok(result.stations.every((station) => station.nameMissing));
+  assert.equal(stationParts('Caja Reportes 2').folder, 'CAJA REPORTES 2');
+  assert.equal(stationParts('Reporte 539').folder, 'REPORTE 539');
+  assert.equal(stationParts('').folder, 'BACKUP');
+  assert.equal(stationParts('CAJA 01').folder, 'CAJA 1');
+});
+
+test('an explicit BACKUP name in the PDF is preserved as a real detected name', () => {
+  const station = parse('Ubicación: BACKUP HOSTNAME PC01 IP 10.0.0.1 No. Serie 123456 DATAMATRIX GTC-UNO').stations[0];
+  assert.equal(station.label, 'BACKUP');
+  assert.equal(station.nameMissing, false);
+});
+
+test('words inside identifier codes are not mistaken for folder headings', () => {
+  const result = parse('CAJA REPORTES\nHOSTNAME AG539CAJA01 IP 10.0.0.1 No. Serie 123456 DATAMATRIX GTC-REPORTES\nHOSTNAME PC02 IP 10.0.0.2 No. Serie 234567 DATAMATRIX GTC-BACKUP\nHOSTNAME PC03 No. Serie 345678 DATAMATRIX GTC-AUTOBANCO');
+  assert.deepEqual(result.stations.map((station) => station.label), ['CAJA REPORTES', 'BACKUP', 'BACKUP 2']);
 });

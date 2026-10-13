@@ -53,7 +53,11 @@ test('duplicate names cannot silently overwrite signed documents', async () => {
   files.informe = new File(['Different signed document'], 'BOLETA FIRMADA.PDF');
   assert.ok(documentNamesError(files));
   const zip = new JSZip();
-  await assert.rejects(addDocumentsToZip(zip, files), /mismo nombre/);
-  assert.deepEqual(Object.keys(zip.files), []);
+  const warnings = await addDocumentsToZip(zip, files);
+  assert.equal(warnings.length, 1);
+  const saved = await JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array' }));
+  assert.deepEqual(Object.keys(saved.files).sort(), ['Boleta firmada.pdf', 'BOLETA FIRMADA (2).PDF', 'Finalización original.docx'].sort());
+  assert.equal(await saved.file('BOLETA FIRMADA (2).PDF').async('string'), 'Different signed document');
+  assert.deepEqual(await saved.file('Boleta firmada.pdf').async('uint8array'), new Uint8Array(await files.boleta.arrayBuffer()));
   assert.equal(documentNamesError(documents()), null);
 });

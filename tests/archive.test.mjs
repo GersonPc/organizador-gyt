@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import JSZip from 'jszip';
-import { addPhotosToZip, agencyFolderName } from '../app/organizer.ts';
+import { addPhotosToZip, agencyFolderName, planPhotosForZip, stationIssues } from '../app/organizer.ts';
 import { addDocumentsToZip, blankDocuments } from '../app/documents.ts';
 
 const photoBytes = new Uint8Array([255, 216, 255, 128, 0, 10]);
@@ -73,13 +73,47 @@ test('a ZIP without certificadoras or cable photos creates no empty folders', as
   assert.deepEqual(Object.keys(saved.files), []);
 });
 
-test('box photos and cables cannot silently overwrite existing files', async () => {
+test('duplicate names are reported and exported without losing any photo', async () => {
   const zip = new JSZip();
-  await assert.rejects(addPhotosToZip(zip, [station('CAJA 1'), station('CAJA 01')], []), /mismo nombre/);
-  assert.deepEqual(Object.keys(zip.files), []);
+  const warnings = await addPhotosToZip(zip, [station('CAJA 1'), station('CAJA 01')], []);
+  assert.equal(warnings.length, 3);
+  const saved = await JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array' }));
+  const photos = Object.values(saved.files).filter((entry) => !entry.dir);
+  assert.equal(photos.length, 6);
+  assert.equal(photos.filter((entry) => entry.name.includes(' (2).')).length, 3);
+  for (const photo of photos) assert.deepEqual(await photo.async('uint8array'), photoBytes);
+  const cableZip = new JSZip();
   const original = new File(['original photo'], 'CABLEADO/1.JPG');
-  zip.file(original.name, await original.arrayBuffer(), { createFolders: false });
-  await assert.rejects(addPhotosToZip(zip, [station('CAJA 1')], [new File([photoBytes], 'cable.jpg')]), /mismo nombre/);
-  assert.deepEqual(Object.keys(zip.files), [original.name]);
-  assert.equal(await zip.file(original.name).async('string'), 'original photo');
+  cableZip.file(original.name, await original.arrayBuffer(), { createFolders: false });
+  const cableWarnings = await addPhotosToZip(cableZip, [], [new File([photoBytes], 'cable.jpg')]);
+  assert.equal(cableWarnings.length, 1);
+  assert.equal(await cableZip.file(original.name).async('string'), 'original photo');
+  assert.deepEqual(await cableZip.file('CABLEADO/1 (2).jpg').async('uint8array'), photoBytes);
+});
+
+test('missing metadata and incomplete or extra stations remain downloadable with explicit warnings', async () => {
+  const backup = { ...station(''), ip: '', serial: '', datamatrix: '' };
+  const reportes = { ...station('CAJA REPORTES'), files: { ...station('CAJA REPORTES').files, serie: null } };
+  const extra = { ...station('CAJA 3'), excluded: true };
+  const issues = stationIssues(backup);
+  assert.deepEqual(issues.map((issue) => issue.field), ['label', 'ip', 'identifiers']);
+  assert.ok(stationIssues(reportes).some((issue) => issue.field === 'photos'));
+  assert.deepEqual(stationIssues(extra), []);
+  const plan = planPhotosForZip([backup, reportes, extra], []);
+  assert.equal(plan.entries.length, 5);
+  const zip = new JSZip();
+  await addPhotosToZip(zip, [backup, reportes, extra], []);
+  const saved = await JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array' }));
+  assert.ok(saved.file('BACKUP/BACKUP_IP_SIN_IP Fotografia Certificadora.JPG'));
+  assert.ok(saved.file('CAJA REPORTES/CAJAREPORTES_IP_10.0.0.1 Fotografia Certificadora.JPG'));
+  assert.equal(Object.keys(saved.files).some((name) => name.startsWith('CAJA 3/')), false);
+  assert.equal(Object.values(saved.files).filter((entry) => !entry.dir).length, 5);
+});
+
+test('multiple unnamed stations get distinct BACKUP folders and keep all of their files', async () => {
+  const zip = new JSZip();
+  await addPhotosToZip(zip, [station(''), station('')], []);
+  assert.ok(zip.files['BACKUP/']);
+  assert.ok(zip.files['BACKUP 2/']);
+  assert.equal(Object.values(zip.files).filter((entry) => !entry.dir).length, 6);
 });

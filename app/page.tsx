@@ -1,17 +1,20 @@
 'use client';
 
-import { ChangeEvent, DragEvent, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { RequiredPhotoRole, StationPhotoFiles } from './organizer';
-import { addDocumentsToZip, blankDocuments, DOCUMENT_SLOTS, documentFileError, documentNamesError, missingDocumentsWarning } from './documents';
+import { addDocumentsToZip, blankDocuments, DOCUMENT_SLOTS, documentFileError, planDocumentsForZip } from './documents';
 import type { DocumentFiles, DocumentRole } from './documents';
 import {
   agencyFolderName,
   addPhotosToZip,
   hasCertificadora,
   parseBoletaText,
+  planPhotosForZip,
   photoOutputName,
   photoRoleLabel,
   requiredPhotoRoles,
+  stationIssues,
+  stationParts,
 } from './organizer';
 
 type Station = {
@@ -24,6 +27,8 @@ type Station = {
   files: StationPhotoFiles;
   separateIdentifiers?: boolean;
   collapsed?: boolean;
+  excluded?: boolean;
+  nameMissing?: boolean;
 };
 
 const FILE_ACCEPT = '.heic,.heif,.jpg,.jpeg,.png,image/heic,image/heif,image/jpeg,image/png';
@@ -154,22 +159,41 @@ export default function Home() {
   const [parsing, setParsing] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = reviewRef.current;
+    if (reviewOpen && dialog && !dialog.open) dialog.showModal();
+    if (!reviewOpen && dialog?.open) dialog.close();
+  }, [reviewOpen]);
 
-  const requiredTotal = stations.reduce((total, station) => total + requiredPhotoRoles(station.separateIdentifiers).length, 0);
+  const includedStations = stations.filter((station) => !station.excluded);
+  const requiredTotal = includedStations.reduce((total, station) => total + requiredPhotoRoles(station.separateIdentifiers).length, 0);
   const documentsReady = DOCUMENT_SLOTS.filter((slot) => documents[slot.role]).length;
-  const requiredReady = stations.reduce(
+  const requiredReady = includedStations.reduce(
     (total, station) => total + requiredPhotoRoles(station.separateIdentifiers).filter((role) => station.files[role]).length,
     0,
   );
-  const validStationCount = stations.filter((station) => station.ip.trim() && station.label.trim()).length;
-  const canGenerate = Boolean(
-    pdfFile &&
-      agencyCode.trim() &&
-      agencyName.trim() &&
-      (stations.length > 0 || excludedStationLabels.length > 0) &&
-      requiredReady === requiredTotal &&
-      validStationCount === stations.length,
-  );
+  const canGenerate = Boolean(pdfFile && !parsing);
+  const issuesByStation = new Map(stations.map((station) => [station.id, stationIssues(station)]));
+  const documentPlan = planDocumentsForZip(documents);
+  const photoPlan = planPhotosForZip(stations, cableFiles, documentPlan.entries.map((entry) => entry.name));
+  const agencyIssues = [
+    ...(!agencyCode.trim() ? ['Falta el código de agencia. El ZIP usará SIN CODIGO si no lo completas.'] : []),
+    ...(!agencyName.trim() ? ['Falta el nombre de agencia. El ZIP usará SIN NOMBRE si no lo completas.'] : []),
+  ];
+  const dataIssues = [
+    ...warnings, ...agencyIssues,
+    ...stations.flatMap((station) => (issuesByStation.get(station.id) || []).map((issue) => `${station.label || 'BACKUP'}: ${issue.message}`)),
+    ...documentPlan.warnings, ...photoPlan.warnings,
+    ...(!stations.length && !excludedStationLabels.length ? ['No se detectaron estaciones. Puedes agregarlas manualmente o descargar los archivos disponibles.'] : []),
+  ];
+  const missingDocuments = DOCUMENT_SLOTS.filter((slot) => !documents[slot.role]);
+  const reviewMessages = [
+    ...dataIssues,
+    ...(missingDocuments.length ? [`No se adjuntaron estos documentos opcionales: ${missingDocuments.map((slot) => slot.label).join(', ')}.`] : []),
+    ...(!photoPlan.entries.length && !documentPlan.entries.length ? ['No hay archivos seleccionados para incluir en el ZIP.'] : []),
+  ];
 
   const outputName = useMemo(
     () => agencyFolderName(agencyCode || 'SIN CODIGO', agencyName || 'SIN NOMBRE'),
@@ -185,6 +209,7 @@ export default function Home() {
     setParsing(true);
     setWarnings([]);
     setMessage('');
+    setReviewOpen(false);
 
     try {
       const pdfjs = await import('pdfjs-dist');
@@ -194,9 +219,9 @@ export default function Home() {
       for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
-        pageTexts.push(content.items.map((item) => ('str' in item ? item.str : '')).join(' '));
+        pageTexts.push(content.items.map((item) => 'str' in item ? `${item.str}${item.hasEOL ? '\n' : ' '}` : '').join(''));
       }
-      const parsed = parseBoletaText(pageTexts.join(' '), file.name);
+      const parsed = parseBoletaText(pageTexts.join('\n'), file.name);
       setAgencyCode(parsed.agencyCode);
       setAgencyName(parsed.agencyName);
       const withCertificadora = parsed.stations.filter(hasCertificadora);
@@ -208,7 +233,7 @@ export default function Home() {
           files: blankFiles(),
         })),
       );
-      setWarnings(parsed.warnings);
+      setWarnings(parsed.warnings.filter((warning) => !warning.startsWith('Revisa el código') && !warning.startsWith('Hay certificadoras con solo') && !warning.startsWith('No se detectaron estaciones')));
       setMessage(
         withCertificadora.length
           ? `${withCertificadora.length} estaciones con certificadora. Revisa los datos antes de asignar fotos.`
@@ -225,7 +250,16 @@ export default function Home() {
   };
 
   const updateStation = (id: string, patch: Partial<Station>) => {
-    setStations((current) => current.map((station) => (station.id === id ? { ...station, ...patch } : station)));
+    setStations((current) => current.map((station) => (station.id === id ? {
+      ...station, ...patch,
+      ...(patch.label !== undefined ? { nameMissing: !patch.label.trim() } : {}),
+    } : station)));
+  };
+
+  const editStation = (id: string) => {
+    setReviewOpen(false);
+    updateStation(id, { collapsed: false });
+    window.requestAnimationFrame(() => document.getElementById(`station-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
   };
 
   const updateFile = (id: string, role: RequiredPhotoRole, file: File | null) => {
@@ -307,23 +341,22 @@ export default function Home() {
     setWarnings([]);
     setMessage('');
     setProgress(0);
+    setReviewOpen(false);
   };
 
-  const generateZip = async () => {
+  const generateZip = async (continueWithIssues = false) => {
     if (generating) return;
     if (!canGenerate || !pdfFile) {
-      setMessage('Completa los datos y las 3 o 5 fotografías de cada estación, según la opción seleccionada.');
+      setMessage('Selecciona la boleta y espera a que termine de leerse.');
       return;
     }
 
-    const namesError = documentNamesError(documents);
-    if (namesError) {
-      setMessage(namesError);
+    if (!continueWithIssues && reviewMessages.length) {
+      setReviewOpen(true);
       return;
     }
-    const warning = missingDocumentsWarning(documents);
-    if (warning) window.alert(warning);
 
+    setReviewOpen(false);
     setGenerating(true);
     setProgress(0);
     setMessage('Preparando el ZIP sin modificar los archivos originales…');
@@ -409,7 +442,7 @@ export default function Home() {
               </label>
 
               {pdfFile && (
-                <div className="mt-4 grid gap-3 sm:grid-cols-[160px_1fr]">
+                <div id="agency-details" className="mt-4 grid gap-3 sm:grid-cols-[160px_1fr]">
                   <label className="text-xs font-bold text-[#505867]">Código de agencia
                     <input value={agencyCode} onChange={(event) => setAgencyCode(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] bg-white px-3 py-2.5 text-sm font-medium outline-none focus:border-[#d7193f]" placeholder="539" />
                   </label>
@@ -422,11 +455,41 @@ export default function Home() {
           </div>
         </section>
 
-        {(warnings.length > 0 || message) && (
+        {message && (
           <div className="mt-4 space-y-2" aria-live="polite">
-            {warnings.map((warning) => <p key={warning} className="rounded-xl border border-[#efd59c] bg-[#fff8e7] px-4 py-3 text-sm text-[#795410]">{warning}</p>)}
-            {message && <p className="rounded-xl border border-[#cfdbe9] bg-[#f3f7fb] px-4 py-3 text-sm text-[#385777]">{message}</p>}
+            <p className="rounded-xl border border-[#cfdbe9] bg-[#f3f7fb] px-4 py-3 text-sm text-[#385777]">{message}</p>
           </div>
+        )}
+
+        {pdfFile && !parsing && dataIssues.length > 0 && (
+          <section className="mt-4 rounded-2xl border border-[#efd59c] bg-[#fff8e7] p-4 text-sm text-[#795410]" aria-label="Datos por revisar">
+            <h2 className="font-black">Datos por revisar</h2>
+            <p className="mt-1">Puedes corregir estos datos o descargar los archivos disponibles. Los avisos no bloquean la descarga.</p>
+            {agencyIssues.length > 0 && <div className="mt-3">
+              {agencyIssues.map((issue) => <p key={issue}>{issue}</p>)}
+              <button type="button" className="mt-1 font-bold underline" onClick={() => document.getElementById('agency-details')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>Corregir agencia</button>
+            </div>}
+            {stations.map((station) => {
+              const issues = issuesByStation.get(station.id) || [];
+              return issues.length > 0 && <div key={station.id} className="mt-3 rounded-xl bg-white/60 p-3">
+                <p className="font-bold">{station.label || 'BACKUP'}{station.hostname ? ` · ${station.hostname}` : ''}</p>
+                {issues.map((issue) => <p key={issue.field} className="mt-1">{issue.message}</p>)}
+                <div className="mt-2 flex flex-wrap gap-4">
+                  <button type="button" className="font-bold underline" onClick={() => editStation(station.id)}>Corregir datos o fotos</button>
+                  <button type="button" className="font-bold underline" onClick={() => updateStation(station.id, { excluded: true })}>Excluir esta estación del ZIP</button>
+                </div>
+              </div>;
+            })}
+            {[...documentPlan.warnings, ...photoPlan.warnings].map((warning) => <p key={warning} className="mt-3">{warning}</p>)}
+            {photoPlan.warnings.length > 0 && <div className="mt-2 flex flex-wrap gap-3">
+              {includedStations.map((station) => <button key={station.id} type="button" className="font-bold underline" onClick={() => editStation(station.id)}>Revisar {station.label || 'BACKUP'}</button>)}
+            </div>}
+            {warnings.map((warning) => <div key={warning} className="mt-3">
+              <p>{warning}</p>
+              <button type="button" className="mt-1 font-bold underline" onClick={() => setWarnings((current) => current.filter((item) => item !== warning))}>Ya lo revisé</button>
+            </div>)}
+            {!stations.length && !excludedStationLabels.length && <p className="mt-3">No se detectaron estaciones. Usa «Agregar estación» para completarlas manualmente.</p>}
+          </section>
         )}
 
         {pdfFile && !parsing && (
@@ -448,12 +511,12 @@ export default function Home() {
 
             <div className="grid items-start gap-5 xl:grid-cols-2">
               {stations.map((station, stationIndex) => (
-                <article key={station.id} className="overflow-hidden rounded-[22px] border border-[#d9d7d0] bg-white shadow-[0_10px_35px_rgba(23,32,51,0.045)]">
+                <article key={station.id} className={`overflow-hidden rounded-[22px] border border-[#d9d7d0] bg-white shadow-[0_10px_35px_rgba(23,32,51,0.045)] ${station.excluded ? 'opacity-60' : ''}`}>
                   <div className="flex items-start justify-between gap-4 border-b border-[#ebe9e3] bg-[#fbfaf7] px-5 py-4">
                     <div className="flex min-w-0 items-center gap-3">
                       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#172033] text-sm font-black text-white">{stationIndex + 1}</span>
                       <div className="min-w-0">
-                        <p className="truncate font-black">{station.label || 'Sin nombre'}</p>
+                        <p className="truncate font-black">{stationParts(station.label).folder}</p>
                         <p className="mt-0.5 truncate text-xs text-[#7b818d]">{station.hostname || 'Agregada manualmente'}</p>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <span className="rounded-md border border-[#dedbd3] bg-white px-2 py-1 text-[11px] font-semibold text-[#5e6674]">
@@ -466,6 +529,9 @@ export default function Home() {
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-2">
+                      <button type="button" aria-pressed={!station.excluded} onClick={() => updateStation(station.id, { excluded: !station.excluded })} className="rounded-lg border border-[#d8d6cf] bg-white px-2 py-1.5 text-xs font-bold">
+                        {station.excluded ? 'Excluida · Volver a incluir' : 'Incluida en ZIP ✓'}
+                      </button>
                       <span className={`text-xs font-bold ${requiredPhotoRoles(station.separateIdentifiers).every((role) => station.files[role]) ? 'text-[#17663f]' : 'text-[#717885]'}`} aria-live="polite">
                         {requiredPhotoRoles(station.separateIdentifiers).filter((role) => station.files[role]).length}/{requiredPhotoRoles(station.separateIdentifiers).length} fotos
                       </span>
@@ -501,13 +567,23 @@ export default function Home() {
 
                   <div id={`station-${station.id}`} hidden={station.collapsed} className="p-5">
                     <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="text-xs font-bold text-[#505867]">Ubicación
-                        <input value={station.label} onChange={(event) => updateStation(station.id, { label: event.target.value.toUpperCase() })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" />
+                      <label className="text-xs font-bold text-[#505867]">Nombre de carpeta
+                        <input value={station.label} placeholder="BACKUP" aria-invalid={(issuesByStation.get(station.id) || []).some((issue) => issue.field === 'label')} onChange={(event) => updateStation(station.id, { label: event.target.value.toUpperCase() })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" />
                       </label>
                       <label className="text-xs font-bold text-[#505867]">Dirección IP
-                        <input value={station.ip} onChange={(event) => updateStation(station.id, { ip: event.target.value.trim() })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" placeholder="192.168.1.10" inputMode="decimal" />
+                        <input value={station.ip} aria-invalid={(issuesByStation.get(station.id) || []).some((issue) => issue.field === 'ip')} onChange={(event) => updateStation(station.id, { ip: event.target.value.trim() })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" placeholder="192.168.1.10" inputMode="decimal" />
+                      </label>
+                      <label className="text-xs font-bold text-[#505867]">No. de serie
+                        <input value={station.serial} onChange={(event) => updateStation(station.id, { serial: event.target.value })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" placeholder="No especificada" />
+                      </label>
+                      <label className="text-xs font-bold text-[#505867]">Código DATAMATRIX / inventario
+                        <input value={station.datamatrix} onChange={(event) => updateStation(station.id, { datamatrix: event.target.value })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" placeholder="No especificado" />
                       </label>
                     </div>
+
+                    {(issuesByStation.get(station.id) || []).length > 0 && <div className="mt-3 rounded-xl border border-[#efd59c] bg-[#fff8e7] p-3 text-xs leading-5 text-[#795410]">
+                      {(issuesByStation.get(station.id) || []).map((issue) => <p key={issue.field}>{issue.message}</p>)}
+                    </div>}
 
                     <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-[#172033] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#26324a]">
                       <span>Cargar las {requiredPhotoRoles(station.separateIdentifiers).length} fotos en orden {station.separateIdentifiers ? '1–2–3–4–5' : '1–2–3'}</span>
@@ -540,7 +616,7 @@ export default function Home() {
                 <div>
                   <p className="mb-2 text-sm font-bold text-[#d7193f]">Documentos opcionales</p>
                   <h3 className="text-xl font-black tracking-[-0.025em]">Documentos firmados y archivo Word</h3>
-                  <p className="mt-2 text-sm leading-6 text-[#717885]">Puedes adjuntar solo los documentos que tengas. Se incluyen directamente en el ZIP con su nombre original. Si falta alguno, aparecerá un aviso; pulsa Aceptar para generar el ZIP con los archivos disponibles.</p>
+                  <p className="mt-2 text-sm leading-6 text-[#717885]">Puedes adjuntar solo los documentos que tengas. Se incluyen directamente en el ZIP con su nombre original. Si falta alguno, aparecerá un aviso; elige «Descargar de todas formas» para generar el ZIP con los archivos disponibles.</p>
                   <p className="mt-1 text-sm text-[#717885]">Firmados: PDF o imagen. Word: .doc o .docx.</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-[#f4f3ef] px-3 py-1.5 text-sm font-bold text-[#505867]" aria-live="polite">{documentsReady} documento{documentsReady === 1 ? '' : 's'} adjunto{documentsReady === 1 ? '' : 's'}</span>
@@ -618,17 +694,30 @@ export default function Home() {
               <div className="min-w-0">
                 <p className="text-xs font-black uppercase tracking-[0.12em] text-[#8a909c]">3 · Descargar</p>
                 <p className="mt-1 truncate font-black">{outputName}.zip</p>
-                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías obligatorias · {cableFiles.length} de cableado · {documentsReady} documento{documentsReady === 1 ? '' : 's'} opcional{documentsReady === 1 ? '' : 'es'}</p>
+                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías · {cableFiles.length} de cableado · {documentsReady} documento{documentsReady === 1 ? '' : 's'} opcional{documentsReady === 1 ? '' : 'es'}</p>
+                {dataIssues.length > 0 && <p className="mt-1 text-xs font-bold text-[#795410]">{dataIssues.length} aviso{dataIssues.length === 1 ? '' : 's'} por revisar · Puedes descargar de todas formas</p>}
                 <div className="mt-2 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-[#ebe9e3]">
                   <div className="h-full rounded-full bg-[#d7193f] transition-all" style={{ width: `${requiredTotal ? (requiredReady / requiredTotal) * 100 : canGenerate ? 100 : 0}%` }} />
                 </div>
               </div>
-              <button type="button" disabled={!canGenerate || generating} onClick={generateZip} className="shrink-0 rounded-xl bg-[#d7193f] px-6 py-3.5 text-sm font-black text-white shadow-[0_8px_22px_rgba(215,25,63,0.25)] transition hover:bg-[#b91435] disabled:cursor-not-allowed disabled:bg-[#b8b5ae] disabled:shadow-none">
-                {generating ? `Generando ${progress}%` : canGenerate ? 'Descargar ZIP ordenado' : 'Completa las fotografías'}
+              <button type="button" disabled={!canGenerate || generating} onClick={() => generateZip()} className="shrink-0 rounded-xl bg-[#d7193f] px-6 py-3.5 text-sm font-black text-white shadow-[0_8px_22px_rgba(215,25,63,0.25)] transition hover:bg-[#b91435] disabled:cursor-not-allowed disabled:bg-[#b8b5ae] disabled:shadow-none">
+                {generating ? `Generando ${progress}%` : 'Descargar ZIP ordenado'}
               </button>
             </div>
           </section>
         )}
+
+        <dialog ref={reviewRef} onCancel={() => setReviewOpen(false)} aria-labelledby="download-review-title" className="m-auto max-h-[85vh] w-[calc(100%_-_2rem)] max-w-2xl overflow-auto rounded-[22px] border-0 bg-white p-5 text-[#172033] shadow-xl backdrop:bg-[#172033]/60 sm:p-6">
+            <h2 id="download-review-title" className="text-xl font-black">Revisar antes de descargar</h2>
+            <p className="mt-2 text-sm leading-6 text-[#626a78]">Puedes volver a corregir los datos o descargar de todas formas. El ZIP incluirá los archivos disponibles de las estaciones que dejaste incluidas.</p>
+            <ul className="mt-4 list-disc space-y-2 rounded-xl bg-[#fff8e7] p-4 pl-8 text-sm leading-6 text-[#795410]">
+              {reviewMessages.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}
+            </ul>
+            <div className="mt-5 flex flex-wrap justify-end gap-3">
+              <button type="button" autoFocus onClick={() => setReviewOpen(false)} className="rounded-xl border border-[#d8d6cf] px-4 py-3 text-sm font-bold">Volver a corregir</button>
+              <button type="button" onClick={() => generateZip(true)} className="rounded-xl bg-[#d7193f] px-4 py-3 text-sm font-bold text-white">Descargar de todas formas</button>
+            </div>
+        </dialog>
 
         <footer className="mt-10 flex flex-col justify-between gap-2 border-t border-[#d9d7d0] py-6 text-xs text-[#747b88] sm:flex-row">
           <p>Los archivos permanecen en tu dispositivo y conservan su calidad original.</p>
