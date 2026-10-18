@@ -35,7 +35,7 @@ export function stationIssues(station: ExportStation) {
   const roles = requiredPhotoRoles(station.separateIdentifiers);
   const missing = roles.filter((role) => !station.files[role]);
   if (missing.length) {
-    issues.push({ field: 'photos', message: `Faltan ${missing.length} de ${roles.length} fotos. Se incluirán las disponibles. Si esta estación se detectó de más, puedes excluirla del ZIP.` });
+    issues.push({ field: 'photos', message: `Faltan ${missing.length} de ${roles.length} fotos. Se incluirán las disponibles. Si esta estación se detectó de más, puedes eliminarla de la lista.` });
   }
   return issues;
 }

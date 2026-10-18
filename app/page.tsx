@@ -27,7 +27,7 @@ type Station = {
   files: StationPhotoFiles;
   separateIdentifiers?: boolean;
   collapsed?: boolean;
-  excluded?: boolean;
+  editing?: boolean;
   nameMissing?: boolean;
 };
 
@@ -44,6 +44,47 @@ function formatBytes(bytes: number) {
 
 function newStation(label: string): Station {
   return { id: crypto.randomUUID(), hostname: '', ip: '', label, serial: '', datamatrix: '', files: blankFiles() };
+}
+
+function SlideSwitch({ label, accessibleLabel, checked, controls, onChange }: {
+  label: string;
+  accessibleLabel?: string;
+  checked: boolean;
+  controls?: string;
+  onChange: () => void;
+}) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} aria-label={accessibleLabel || label} aria-controls={controls} onClick={onChange} className="slide-switch">
+      <span className="slide-switch-track" aria-hidden="true"><span /></span>
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function CollapseButton({ station, onClick }: { station: Station; onClick: () => void }) {
+  const [tooltipDismissed, setTooltipDismissed] = useState(false);
+  const action = station.collapsed ? 'Expandir' : 'Contraer';
+  return (
+    <span className="collapse-control">
+      <button
+        type="button"
+        aria-expanded={!station.collapsed}
+        aria-controls={`station-${station.id}`}
+        aria-label={`${action} ${station.label || 'estación'}`}
+        aria-describedby={`collapse-tip-${station.id}`}
+        onClick={onClick}
+        onMouseEnter={() => setTooltipDismissed(false)}
+        onFocus={() => setTooltipDismissed(false)}
+        onKeyDown={(event) => { if (event.key === 'Escape') setTooltipDismissed(true); }}
+        className="collapse-button"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`collapse-arrow ${station.collapsed ? 'is-collapsed' : ''}`}>
+          <path d="M12 19V5m-6 6 6-6 6 6" />
+        </svg>
+      </button>
+      <span id={`collapse-tip-${station.id}`} role="tooltip" className="collapse-tooltip" hidden={tooltipDismissed}>{action}</span>
+    </span>
+  );
 }
 
 function FileSlot({
@@ -149,6 +190,7 @@ export default function Home() {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [agencyCode, setAgencyCode] = useState('');
   const [agencyName, setAgencyName] = useState('');
+  const [agencyEditing, setAgencyEditing] = useState(false);
   const [stations, setStations] = useState<Station[]>([]);
   const [excludedStationLabels, setExcludedStationLabels] = useState<string[]>([]);
   const [cableFiles, setCableFiles] = useState<File[]>([]);
@@ -167,10 +209,9 @@ export default function Home() {
     if (!reviewOpen && dialog?.open) dialog.close();
   }, [reviewOpen]);
 
-  const includedStations = stations.filter((station) => !station.excluded);
-  const requiredTotal = includedStations.reduce((total, station) => total + requiredPhotoRoles(station.separateIdentifiers).length, 0);
+  const requiredTotal = stations.reduce((total, station) => total + requiredPhotoRoles(station.separateIdentifiers).length, 0);
   const documentsReady = DOCUMENT_SLOTS.filter((slot) => documents[slot.role]).length;
-  const requiredReady = includedStations.reduce(
+  const requiredReady = stations.reduce(
     (total, station) => total + requiredPhotoRoles(station.separateIdentifiers).filter((role) => station.files[role]).length,
     0,
   );
@@ -204,6 +245,7 @@ export default function Home() {
     const file = event.target.files?.[0];
     if (!file) return;
     setPdfFile(file);
+    setAgencyEditing(false);
     setDocuments(blankDocuments());
     setExcludedStationLabels([]);
     setParsing(true);
@@ -236,7 +278,7 @@ export default function Home() {
       setWarnings(parsed.warnings.filter((warning) => !warning.startsWith('Revisa el código') && !warning.startsWith('Hay certificadoras con solo') && !warning.startsWith('No se detectaron estaciones')));
       setMessage(
         withCertificadora.length
-          ? `${withCertificadora.length} estaciones con certificadora. Revisa los datos antes de asignar fotos.`
+          ? `${withCertificadora.length} estaciones con certificadora. Ya puedes cargar las fotos.`
           : parsed.stations.length
             ? 'Las cajas detectadas no tienen número de serie ni código DATAMATRIX. Puedes descargar el ZIP sin fotografías de certificadoras.'
           : 'Agrega las estaciones manualmente.',
@@ -254,12 +296,6 @@ export default function Home() {
       ...station, ...patch,
       ...(patch.label !== undefined ? { nameMissing: !patch.label.trim() } : {}),
     } : station)));
-  };
-
-  const editStation = (id: string) => {
-    setReviewOpen(false);
-    updateStation(id, { collapsed: false });
-    window.requestAnimationFrame(() => document.getElementById(`station-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
   };
 
   const updateFile = (id: string, role: RequiredPhotoRole, file: File | null) => {
@@ -334,6 +370,7 @@ export default function Home() {
     setPdfFile(null);
     setAgencyCode('');
     setAgencyName('');
+    setAgencyEditing(false);
     setStations([]);
     setExcludedStationLabels([]);
     setCableFiles([]);
@@ -423,13 +460,13 @@ export default function Home() {
         </div>
 
         <section className="rounded-[26px] border border-[#d9d7d0] bg-white p-5 shadow-[0_16px_50px_rgba(23,32,51,0.06)] sm:p-7">
-          <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
             <div>
               <p className="text-xs font-black uppercase tracking-[0.14em] text-[#8a909c]">1 · Boleta de Servicio de agencia</p>
               <h2 className="mt-2 text-xl font-black tracking-[-0.02em]">Detectar agencia y estaciones</h2>
               <p className="mt-2 text-sm leading-6 text-[#717885]">El PDF se lee en este dispositivo para identificar cajas y series. Solo sirve como referencia y no se incluye en el ZIP.</p>
             </div>
-            <div>
+            <div className="min-w-0">
               <label className="block cursor-pointer rounded-2xl border-2 border-dashed border-[#cbc8c0] bg-[#faf9f6] p-5 transition hover:border-[#d7193f] hover:bg-[#fff7f8]">
                 <input className="sr-only" type="file" accept="application/pdf,.pdf" aria-label="Boleta de Servicio de agencia" onChange={handlePdf} />
                 <div className="flex items-center gap-4">
@@ -442,13 +479,25 @@ export default function Home() {
               </label>
 
               {pdfFile && (
-                <div id="agency-details" className="mt-4 grid gap-3 sm:grid-cols-[160px_1fr]">
-                  <label className="text-xs font-bold text-[#505867]">Código de agencia
-                    <input value={agencyCode} onChange={(event) => setAgencyCode(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] bg-white px-3 py-2.5 text-sm font-medium outline-none focus:border-[#d7193f]" placeholder="539" />
-                  </label>
-                  <label className="text-xs font-bold text-[#505867]">Nombre de agencia
-                    <input value={agencyName} onChange={(event) => setAgencyName(event.target.value)} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] bg-white px-3 py-2.5 text-sm font-medium uppercase outline-none focus:border-[#d7193f]" placeholder="C.C PORTALES" />
-                  </label>
+                <div className="mt-4 rounded-xl border border-[#e5e2da] bg-[#fbfaf7] p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#717885]">Agencia detectada</p>
+                      <p className="mt-1 break-words text-sm font-bold">{agencyCode || 'Sin código'} · {agencyName || 'Sin nombre'}</p>
+                    </div>
+                    <SlideSwitch label="Editar datos" accessibleLabel="Editar datos de agencia" checked={agencyEditing} controls="agency-details" onChange={() => setAgencyEditing((current) => !current)} />
+                  </div>
+                  <div id="agency-details" hidden={!agencyEditing} className="edit-panel mt-4 border-t border-[#e5e2da] pt-4">
+                    <div className="grid gap-3 sm:grid-cols-[160px_1fr]">
+                      <label className="field-label">Código de agencia
+                        <input value={agencyCode} onChange={(event) => setAgencyCode(event.target.value)} className="data-input" placeholder="539" />
+                      </label>
+                      <label className="field-label">Nombre de agencia
+                        <input value={agencyName} onChange={(event) => setAgencyName(event.target.value)} className="data-input uppercase" placeholder="C.C PORTALES" />
+                      </label>
+                    </div>
+                    {agencyIssues.length > 0 && <div className="mt-3 text-xs leading-5 text-[#795410]">{agencyIssues.map((issue) => <p key={issue}>{issue}</p>)}</div>}
+                  </div>
                 </div>
               )}
             </div>
@@ -459,37 +508,6 @@ export default function Home() {
           <div className="mt-4 space-y-2" aria-live="polite">
             <p className="rounded-xl border border-[#cfdbe9] bg-[#f3f7fb] px-4 py-3 text-sm text-[#385777]">{message}</p>
           </div>
-        )}
-
-        {pdfFile && !parsing && dataIssues.length > 0 && (
-          <section className="mt-4 rounded-2xl border border-[#efd59c] bg-[#fff8e7] p-4 text-sm text-[#795410]" aria-label="Datos por revisar">
-            <h2 className="font-black">Datos por revisar</h2>
-            <p className="mt-1">Puedes corregir estos datos o descargar los archivos disponibles. Los avisos no bloquean la descarga.</p>
-            {agencyIssues.length > 0 && <div className="mt-3">
-              {agencyIssues.map((issue) => <p key={issue}>{issue}</p>)}
-              <button type="button" className="mt-1 font-bold underline" onClick={() => document.getElementById('agency-details')?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>Corregir agencia</button>
-            </div>}
-            {stations.map((station) => {
-              const issues = issuesByStation.get(station.id) || [];
-              return issues.length > 0 && <div key={station.id} className="mt-3 rounded-xl bg-white/60 p-3">
-                <p className="font-bold">{station.label || 'BACKUP'}{station.hostname ? ` · ${station.hostname}` : ''}</p>
-                {issues.map((issue) => <p key={issue.field} className="mt-1">{issue.message}</p>)}
-                <div className="mt-2 flex flex-wrap gap-4">
-                  <button type="button" className="font-bold underline" onClick={() => editStation(station.id)}>Corregir datos o fotos</button>
-                  <button type="button" className="font-bold underline" onClick={() => updateStation(station.id, { excluded: true })}>Excluir esta estación del ZIP</button>
-                </div>
-              </div>;
-            })}
-            {[...documentPlan.warnings, ...photoPlan.warnings].map((warning) => <p key={warning} className="mt-3">{warning}</p>)}
-            {photoPlan.warnings.length > 0 && <div className="mt-2 flex flex-wrap gap-3">
-              {includedStations.map((station) => <button key={station.id} type="button" className="font-bold underline" onClick={() => editStation(station.id)}>Revisar {station.label || 'BACKUP'}</button>)}
-            </div>}
-            {warnings.map((warning) => <div key={warning} className="mt-3">
-              <p>{warning}</p>
-              <button type="button" className="mt-1 font-bold underline" onClick={() => setWarnings((current) => current.filter((item) => item !== warning))}>Ya lo revisé</button>
-            </div>)}
-            {!stations.length && !excludedStationLabels.length && <p className="mt-3">No se detectaron estaciones. Usa «Agregar estación» para completarlas manualmente.</p>}
-          </section>
         )}
 
         {pdfFile && !parsing && (
@@ -510,105 +528,94 @@ export default function Home() {
             )}
 
             <div className="grid items-start gap-5 xl:grid-cols-2">
-              {stations.map((station, stationIndex) => (
-                <article key={station.id} className={`overflow-hidden rounded-[22px] border border-[#d9d7d0] bg-white shadow-[0_10px_35px_rgba(23,32,51,0.045)] ${station.excluded ? 'opacity-60' : ''}`}>
-                  <div className="flex items-start justify-between gap-4 border-b border-[#ebe9e3] bg-[#fbfaf7] px-5 py-4">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#172033] text-sm font-black text-white">{stationIndex + 1}</span>
-                      <div className="min-w-0">
-                        <p className="truncate font-black">{stationParts(station.label).folder}</p>
-                        <p className="mt-0.5 truncate text-xs text-[#7b818d]">{station.hostname || 'Agregada manualmente'}</p>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <span className="rounded-md border border-[#dedbd3] bg-white px-2 py-1 text-[11px] font-semibold text-[#5e6674]">
-                            Serie esperada: <strong className="text-[#273044]">{station.serial || 'No especificada'}</strong>
-                          </span>
-                          <span className="rounded-md border border-[#dedbd3] bg-white px-2 py-1 text-[11px] font-semibold text-[#5e6674]">
-                            DATAMATRIX: <strong className="text-[#273044]">{station.datamatrix || 'No especificado'}</strong>
-                          </span>
+              {stations.map((station, stationIndex) => {
+                const roles = requiredPhotoRoles(station.separateIdentifiers);
+                const ready = roles.filter((role) => station.files[role]).length;
+                const complete = ready === roles.length;
+                const fieldIssues = (issuesByStation.get(station.id) || []).filter((issue) => issue.field !== 'photos');
+                return (
+                  <article key={station.id} aria-labelledby={`station-title-${station.id}`} className="station-card rounded-[22px] border border-[#d9d7d0] bg-white shadow-[0_10px_35px_rgba(23,32,51,0.045)]">
+                    <div className="rounded-t-[22px] border-b border-[#ebe9e3] bg-[#fbfaf7] p-5">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-sm font-black ${complete ? 'bg-[#e2f2e8] text-[#17663f]' : 'bg-[#172033] text-white'}`} aria-hidden="true">{complete ? '✓' : stationIndex + 1}</span>
+                          <div className="min-w-0">
+                            <h3 id={`station-title-${station.id}`} className="break-words font-black">{stationParts(station.label).folder}</h3>
+                            <p className="mt-1 break-words text-xs text-[#626a78]">{station.ip || 'IP sin especificar'}</p>
+                          </div>
                         </div>
+                        <CollapseButton station={station} onClick={() => updateStation(station.id, { collapsed: !station.collapsed })} />
                       </div>
+                      {station.hostname && <p className="mt-3 break-all text-xs text-[#717885]">{station.hostname}</p>}
+                      <dl className="mt-4 grid grid-cols-2 gap-4 border-t border-[#e5e2da] pt-3 text-xs">
+                        <div className="min-w-0"><dt className="text-[#717885]">Serie esperada</dt><dd className="mt-1 break-all font-semibold text-[#273044]">{station.serial || 'No especificada'}</dd></div>
+                        <div className="min-w-0"><dt className="text-[#717885]">DATAMATRIX / inventario</dt><dd className="mt-1 break-all font-semibold text-[#273044]">{station.datamatrix || 'No especificado'}</dd></div>
+                      </dl>
                     </div>
-                    <div className="flex shrink-0 flex-col items-end gap-2">
-                      <button type="button" aria-pressed={!station.excluded} onClick={() => updateStation(station.id, { excluded: !station.excluded })} className="rounded-lg border border-[#d8d6cf] bg-white px-2 py-1.5 text-xs font-bold">
-                        {station.excluded ? 'Excluida · Volver a incluir' : 'Incluida en ZIP ✓'}
-                      </button>
-                      <span className={`text-xs font-bold ${requiredPhotoRoles(station.separateIdentifiers).every((role) => station.files[role]) ? 'text-[#17663f]' : 'text-[#717885]'}`} aria-live="polite">
-                        {requiredPhotoRoles(station.separateIdentifiers).filter((role) => station.files[role]).length}/{requiredPhotoRoles(station.separateIdentifiers).length} fotos
-                      </span>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={Boolean(station.separateIdentifiers)}
-                        aria-label={`5 fotos: serie e inventario separados en ${station.label || 'estación'}`}
-                        onClick={() => {
-                          updateStation(station.id, { separateIdentifiers: !station.separateIdentifiers, collapsed: false });
+
+                    <div id={`station-${station.id}`} hidden={station.collapsed} className="p-5">
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                        <SlideSwitch label="5 fotos" accessibleLabel={`5 fotos: serie e inventario separados en ${station.label || 'estación'}`} checked={Boolean(station.separateIdentifiers)} onChange={() => {
+                          updateStation(station.id, { separateIdentifiers: !station.separateIdentifiers });
                           setMessage('');
-                        }}
-                        className="flex items-center gap-2 rounded-lg border border-[#d8d6cf] bg-white px-2 py-1.5 text-xs font-bold hover:border-[#172033] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#d7193f]"
-                      >
-                        <span className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${station.separateIdentifiers ? 'bg-[#d7193f]' : 'bg-[#b8b5ae]'}`} aria-hidden="true">
-                          <span className={`absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${station.separateIdentifiers ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
-                        </span>
-                        5 fotos
-                      </button>
-                      <button
-                        type="button"
-                        aria-expanded={!station.collapsed}
-                        aria-controls={`station-${station.id}`}
-                        aria-label={`${station.collapsed ? 'Expandir' : 'Contraer'} ${station.label || 'estación'}`}
-                        onClick={() => updateStation(station.id, { collapsed: !station.collapsed })}
-                        className="rounded-lg border border-[#d8d6cf] bg-white px-3 py-1.5 text-sm font-bold hover:border-[#172033]"
-                      >
-                        {station.collapsed ? 'Expandir ▾' : 'Contraer ▴'}
-                      </button>
-                      <button type="button" onClick={() => setStations((current) => current.filter((item) => item.id !== station.id))} className="rounded-lg px-2 py-1 text-xs font-bold text-[#9b5261] hover:bg-[#fff0f3]">Eliminar</button>
-                    </div>
-                  </div>
-
-                  <div id={`station-${station.id}`} hidden={station.collapsed} className="p-5">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="text-xs font-bold text-[#505867]">Nombre de carpeta
-                        <input value={station.label} placeholder="BACKUP" aria-invalid={(issuesByStation.get(station.id) || []).some((issue) => issue.field === 'label')} onChange={(event) => updateStation(station.id, { label: event.target.value.toUpperCase() })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" />
-                      </label>
-                      <label className="text-xs font-bold text-[#505867]">Dirección IP
-                        <input value={station.ip} aria-invalid={(issuesByStation.get(station.id) || []).some((issue) => issue.field === 'ip')} onChange={(event) => updateStation(station.id, { ip: event.target.value.trim() })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" placeholder="192.168.1.10" inputMode="decimal" />
-                      </label>
-                      <label className="text-xs font-bold text-[#505867]">No. de serie
-                        <input value={station.serial} onChange={(event) => updateStation(station.id, { serial: event.target.value })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" placeholder="No especificada" />
-                      </label>
-                      <label className="text-xs font-bold text-[#505867]">Código DATAMATRIX / inventario
-                        <input value={station.datamatrix} onChange={(event) => updateStation(station.id, { datamatrix: event.target.value })} className="mt-1.5 w-full rounded-xl border border-[#d8d6cf] px-3 py-2.5 text-sm font-semibold outline-none focus:border-[#d7193f]" placeholder="No especificado" />
-                      </label>
-                    </div>
-
-                    {(issuesByStation.get(station.id) || []).length > 0 && <div className="mt-3 rounded-xl border border-[#efd59c] bg-[#fff8e7] p-3 text-xs leading-5 text-[#795410]">
-                      {(issuesByStation.get(station.id) || []).map((issue) => <p key={issue.field}>{issue.message}</p>)}
-                    </div>}
-
-                    <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-[#172033] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#26324a]">
-                      <span>Cargar las {requiredPhotoRoles(station.separateIdentifiers).length} fotos en orden {station.separateIdentifiers ? '1–2–3–4–5' : '1–2–3'}</span>
-                      <span className="rounded-md bg-white/12 px-2 py-1 text-xs">Elegir</span>
-                      <input className="sr-only" type="file" accept={FILE_ACCEPT} multiple onChange={(event) => {
-                        assignPhotos(station.id, event.target.files);
-                        event.target.value = '';
-                      }} />
-                    </label>
-
-                    <div className="mt-3 grid gap-2">
-                      {requiredPhotoRoles(station.separateIdentifiers).map((role, index) => (
-                        <FileSlot key={role} label={`${index + 1}. ${photoRoleLabel(role, station.separateIdentifiers)}`} file={station.files[role]} onFile={(file) => updateFile(station.id, role, file)} />
-                      ))}
-                    </div>
-
-                    {station.ip && requiredPhotoRoles(station.separateIdentifiers).some((role) => station.files[role]) && (
-                      <div className="mt-4 rounded-xl bg-[#f4f3ef] p-3 text-[11px] leading-5 text-[#646b78]">
-                        <strong className="block text-[#333c4e]">Ejemplo de nombre final</strong>
-                        {photoOutputName(station.label, station.ip, 'certificadora', station.files.certificadora?.name || 'foto.jpg')}
+                        }} />
+                        <SlideSwitch label="Editar datos" accessibleLabel={`Editar datos de ${station.label || 'estación'}`} checked={Boolean(station.editing)} controls={`station-data-${station.id}`} onChange={() => updateStation(station.id, { editing: !station.editing })} />
                       </div>
-                    )}
-                  </div>
-                </article>
-              ))}
+
+                      <div id={`station-data-${station.id}`} hidden={!station.editing} className="edit-panel mb-5 rounded-xl border border-[#e5e2da] bg-[#faf9f6] p-4">
+                        <p className="mb-4 text-xs text-[#626a78]">Los cambios se aplican a esta estación y a los nombres del ZIP.</p>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="field-label">Nombre de carpeta
+                            <input value={station.label} placeholder="BACKUP" aria-invalid={fieldIssues.some((issue) => issue.field === 'label')} onChange={(event) => updateStation(station.id, { label: event.target.value.toUpperCase() })} className="data-input" />
+                          </label>
+                          <label className="field-label">Dirección IP
+                            <input value={station.ip} aria-invalid={fieldIssues.some((issue) => issue.field === 'ip')} onChange={(event) => updateStation(station.id, { ip: event.target.value.trim() })} className="data-input" placeholder="192.168.1.10" inputMode="decimal" />
+                          </label>
+                          <label className="field-label">No. de serie
+                            <input value={station.serial} onChange={(event) => updateStation(station.id, { serial: event.target.value })} className="data-input" placeholder="No especificada" />
+                          </label>
+                          <label className="field-label">Código DATAMATRIX / inventario
+                            <input value={station.datamatrix} onChange={(event) => updateStation(station.id, { datamatrix: event.target.value })} className="data-input" placeholder="No especificado" />
+                          </label>
+                        </div>
+                        {fieldIssues.length > 0 && <div className="mt-3 text-xs leading-5 text-[#795410]">{fieldIssues.map((issue) => <p key={issue.field}>{issue.message}</p>)}</div>}
+                      </div>
+
+                      <label className="quick-upload flex cursor-pointer items-center justify-between gap-3 rounded-xl bg-[#172033] px-4 py-3 text-sm font-bold text-white transition hover:bg-[#26324a]">
+                        <span><span className="block">Cargar {roles.length} fotos juntas</span><span className="mt-1 block text-xs font-normal text-[#c9d0df]">En orden {station.separateIdentifiers ? '1–2–3–4–5' : '1–2–3'}</span></span>
+                        <span className="shrink-0 rounded-lg bg-white/12 px-3 py-2 text-xs">Elegir</span>
+                        <input className="sr-only" type="file" accept={FILE_ACCEPT} multiple onChange={(event) => {
+                          assignPhotos(station.id, event.target.files);
+                          event.target.value = '';
+                        }} />
+                      </label>
+
+                      <div className="mt-3 grid gap-2">
+                        {roles.map((role, index) => (
+                          <FileSlot key={role} label={`${index + 1}. ${photoRoleLabel(role, station.separateIdentifiers)}`} file={station.files[role]} onFile={(file) => updateFile(station.id, role, file)} />
+                        ))}
+                      </div>
+
+                      {station.ip && ready > 0 && (
+                        <div className="mt-4 break-words rounded-xl bg-[#f4f3ef] p-3 text-[11px] leading-5 text-[#646b78]">
+                          <strong className="block text-[#333c4e]">Ejemplo de nombre final</strong>
+                          {photoOutputName(station.label, station.ip, 'certificadora', station.files.certificadora?.name || 'foto.jpg')}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between gap-4 rounded-b-[22px] border-t border-[#ebe9e3] px-5 py-3">
+                      <div className="flex min-w-0 flex-1 items-center gap-3" aria-live="polite">
+                        <span className={`shrink-0 text-xs font-bold ${complete ? 'text-[#17663f]' : 'text-[#626a78]'}`}>{ready}/{roles.length} fotos{complete ? ' · Listo' : ''}</span>
+                        <span className="h-1.5 max-w-24 flex-1 overflow-hidden rounded-full bg-[#ebe9e3]" aria-hidden="true"><span className={`block h-full rounded-full transition-all ${complete ? 'bg-[#3b8a60]' : 'bg-[#aab0bb]'}`} style={{ width: `${ready / roles.length * 100}%` }} /></span>
+                      </div>
+                      <button type="button" aria-label={`Eliminar ${station.label || 'estación'}`} onClick={() => setStations((current) => current.filter((item) => item.id !== station.id))} className="station-delete flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-[#99606b] hover:bg-[#fff0f3] hover:text-[#b91435]">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7" /></svg>
+                        Eliminar
+                      </button>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
 
             <article className="mt-6 rounded-[22px] border border-[#d9d7d0] bg-white p-5 shadow-[0_10px_35px_rgba(23,32,51,0.045)] sm:p-6">
@@ -690,12 +697,12 @@ export default function Home() {
 
         {pdfFile && !parsing && (
           <section className="sticky bottom-4 z-20 mt-7 rounded-[22px] border border-[#c9c7c0] bg-white/95 p-4 shadow-[0_18px_55px_rgba(23,32,51,0.16)] backdrop-blur sm:p-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="min-w-0">
-                <p className="text-xs font-black uppercase tracking-[0.12em] text-[#8a909c]">3 · Descargar</p>
+                <p className="hidden text-xs font-black uppercase tracking-[0.12em] text-[#8a909c] sm:block">3 · Descargar</p>
                 <p className="mt-1 truncate font-black">{outputName}.zip</p>
-                <p className="mt-1 text-xs text-[#707785]">{requiredReady} de {requiredTotal} fotografías · {cableFiles.length} de cableado · {documentsReady} documento{documentsReady === 1 ? '' : 's'} opcional{documentsReady === 1 ? '' : 'es'}</p>
-                {dataIssues.length > 0 && <p className="mt-1 text-xs font-bold text-[#795410]">{dataIssues.length} aviso{dataIssues.length === 1 ? '' : 's'} por revisar · Puedes descargar de todas formas</p>}
+                <p className="mt-1 text-xs text-[#707785]">{requiredReady}/{requiredTotal} fotos · {cableFiles.length} de cableado · {documentsReady} documento{documentsReady === 1 ? '' : 's'}</p>
+                {dataIssues.length > 0 && <p className="mt-1 text-xs font-bold text-[#795410]">{dataIssues.length} aviso{dataIssues.length === 1 ? '' : 's'} antes de descargar</p>}
                 <div className="mt-2 h-1.5 w-full max-w-md overflow-hidden rounded-full bg-[#ebe9e3]">
                   <div className="h-full rounded-full bg-[#d7193f] transition-all" style={{ width: `${requiredTotal ? (requiredReady / requiredTotal) * 100 : canGenerate ? 100 : 0}%` }} />
                 </div>
@@ -709,7 +716,7 @@ export default function Home() {
 
         <dialog ref={reviewRef} onCancel={() => setReviewOpen(false)} aria-labelledby="download-review-title" className="m-auto max-h-[85vh] w-[calc(100%_-_2rem)] max-w-2xl overflow-auto rounded-[22px] border-0 bg-white p-5 text-[#172033] shadow-xl backdrop:bg-[#172033]/60 sm:p-6">
             <h2 id="download-review-title" className="text-xl font-black">Revisar antes de descargar</h2>
-            <p className="mt-2 text-sm leading-6 text-[#626a78]">Puedes volver a corregir los datos o descargar de todas formas. El ZIP incluirá los archivos disponibles de las estaciones que dejaste incluidas.</p>
+            <p className="mt-2 text-sm leading-6 text-[#626a78]">Puedes volver a corregir los datos o descargar de todas formas. El ZIP incluirá los archivos disponibles de las estaciones que aparecen en la lista.</p>
             <ul className="mt-4 list-disc space-y-2 rounded-xl bg-[#fff8e7] p-4 pl-8 text-sm leading-6 text-[#795410]">
               {reviewMessages.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}
             </ul>
