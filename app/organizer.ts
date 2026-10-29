@@ -25,7 +25,7 @@ export function stationIssues(station: ExportStation) {
   }
   const ip = station.ip.trim();
   if (!ip) {
-    issues.push({ field: 'ip', message: 'Falta la IP. Puedes completarla o descargar usando SIN_IP en los nombres.' });
+    issues.push({ field: 'ip', message: 'No se indicó una IP. Los nombres de las fotografías omitirán la IP; puedes completarla si corresponde.' });
   } else if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(ip) || ip.split('.').some((part) => Number(part) > 255)) {
     issues.push({ field: 'ip', message: 'La IP no tiene un formato válido. Puedes corregirla o descargar con el valor escrito.' });
   }
@@ -77,6 +77,10 @@ export function hasCertificadora(station: Pick<ParsedStation, 'serial' | 'datama
   return Boolean(station.serial.trim() || station.datamatrix.trim());
 }
 
+export function stationNeedsPhotos(station: ParsedStation) {
+  return hasCertificadora(station) || Boolean(!station.hostname && !station.ip && station.label && !station.nameMissing);
+}
+
 const INVALID_WINDOWS_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g;
 
 export function cleanSegment(value: string, fallback: string) {
@@ -89,13 +93,16 @@ export function cleanSegment(value: string, fallback: string) {
 }
 
 export function stationParts(label: string) {
-  const numeric = label.trim().match(/^(?:CAJA\s*)?(\d+)$/i)?.[1];
+  label = label.normalize('NFKC').replace(/\s+/g, ' ').trim()
+    .replace(/^(AUTOCAJA|CAJA)\s*(?:[:#_–—-]\s*)?(?:(?:N[°º.]|NO\.?(?=\s|\d|$)|N[ÚU]MERO\b)\s*[:.]?\s*)?/i, (_, kind: string) => `${kind.toUpperCase()} `);
+  const numeric = label.match(/^(?:(AUTOCAJA|CAJA)\s*)?(\d+)$/i);
   if (numeric) {
-    const number = String(Number(numeric));
+    const number = String(Number(numeric[2]));
+    const kind = numeric[1]?.toUpperCase() || 'CAJA';
     return {
-      folder: `CAJA ${number}`,
-      prefix: `Caja${number}`,
-      cable: number,
+      folder: `${kind} ${number}`,
+      prefix: `${kind === 'AUTOCAJA' ? 'Autocaja' : 'Caja'}${number}`,
+      cable: kind === 'AUTOCAJA' ? `AUTOCAJA_${number}` : number,
     };
   }
 
@@ -124,18 +131,20 @@ function reserveBackupFolder(names: Set<string>) {
 }
 
 function stationLabelFromHostname(hostname: string) {
-  const caja = hostname.match(/CAJA([\p{L}\p{N}_-]+)$/iu)?.[1];
-  if (caja) return /^\d+$/.test(caja) ? `CAJA ${Number(caja)}` : `CAJA ${caja.replace(/[_-]+/g, ' ').trim()}`;
-  if (/AUTOBANCO$/i.test(hostname)) return 'CAJA AUTOBANCO';
-  if (/BACKUP$/i.test(hostname)) return 'BACKUP';
+  const autocaja = hostname.match(/AUTOC[_-]*(\d+)$/i)?.[1];
+  if (autocaja) return stationParts(`AUTOCAJA ${autocaja}`).folder;
+  const caja = hostname.match(/(AUTOCAJA|CAJA)[_-]*([\p{L}\p{N}][\p{L}\p{N}_-]*)$/iu);
+  if (caja) return stationParts(`${caja[1]} ${caja[2].replace(/[_-]+/g, ' ').trim()}`).folder;
+  const special = hostname.match(/(AUTOBANCO|BACKUP)(?:[_-]*(\d+))?$/i);
+  if (special) return stationParts(`${special[1]}${special[2] ? ` ${Number(special[2])}` : ''}`).folder;
   return '';
 }
 
 function stationNamesFromText(text: string) {
-  const fields = String.raw`(?:HOSTNAME\b|(?:DIRECCI[ÓO]N\s+)?IP\b|No\.?\s*(?:de\s+)?Serie\b|(?:C[ÓO]DIGO\s+)?DATAMATRIX\b|MARCA\b|MODELO\b|PROCESADOR\b|MEMORIA\b|DISCO\b|CERTIFICADORA\b|UBICACI[ÓO]N\b|NOMBRE\s+(?:DE\s+)?(?:CAJA|ESTACI[ÓO]N)\b|(?:\d{1,3}\.){3}\d{1,3}\b)`;
-  const end = `(?=\\s+${fields}|[\\r\\n]|$)`;
-  const explicit = new RegExp(`\\b(?:UBICACI[ÓO]N|NOMBRE\\s+(?:DE\\s+)?(?:CAJA|ESTACI[ÓO]N|CARPETA))\\s*[:：]\\s*([^\\r\\n]+?)${end}`, 'giu');
-  const heading = new RegExp(`(?<![\\p{L}\\p{N}_-])(CAJA\\s+[\\p{L}\\p{N}][\\p{L}\\p{N} ._-]*?|AUTOBANCO|BACKUP)${end}`, 'giu');
+  const fields = String.raw`(?:HOSTNAME\b|(?:DIRECCI[ÓO]N\s+)?IP\b|No\.?\s*(?:de\s+)?Serie\b|(?:C[ÓO]DIGO\s+)?DATAMATRIX\b|MARCA\b|MODELO\b|TIPO\b|USUARIO\b|PROCESADOR\b|MEMORIA\b|DISCO\b|CERTIFICADORA\b|UBICACI[ÓO]N\b|NOMBRE\s+(?:(?:DE\s+)?LA\s+|DE\s+)?(?:CAJA|ESTACI[ÓO]N|CARPETA)\b|OBSERVACIONES\b|FECHA\b|FIRMA\b|ESTADO\b|SISTEMA\s+OPERATIVO\b|(?:\d{1,3}\.){3}\d{1,3}\b)`;
+  const end = `(?=\\s+(?:${fields}|(?:AUTOCAJA|CAJA)\\s*\\d+\\b)|[\\r\\n]|$)`;
+  const explicit = new RegExp(`\\b(?:UBICACI[ÓO]N|NOMBRE\\s+(?:(?:DE\\s+)?LA\\s+|DE\\s+)?(?:CAJA|ESTACI[ÓO]N|CARPETA))[ \\t]*(?:[:：][ \\t]*|[ \\t]+)(?:\\r?\\n[ \\t]*)?(?!${fields})([^\\r\\n]+?)${end}`, 'giu');
+  const heading = new RegExp(`(?<![\\p{L}\\p{N}_-])((?:(?:AUTOCAJA|CAJA)[ \\t]*(?:[:#_–—-][ \\t]*)?(?:(?:N[°º.]|NO\\.?|N[ÚU]MERO)[ \\t]*[:.]?[ \\t]*)?[\\p{L}\\p{N}][\\p{L}\\p{N} ._–—-]*?|(?:AUTOBANCO|BACKUP)(?:[ \\t_-]+\\d+)?))${end}`, 'giu');
   const names = Array.from(text.matchAll(explicit), (match) => ({
     index: match.index,
     end: match.index + match[0].length,
@@ -143,6 +152,8 @@ function stationNamesFromText(text: string) {
     explicit: true,
   }));
   for (const match of text.matchAll(heading)) {
+    // A hostname can itself be CAJA01 or BACKUP; it is not a second heading.
+    if (/\bHOSTNAME[ \t]*[:：]?[ \t]*$/i.test(text.slice(0, match.index))) continue;
     if (!names.some((name) => match.index >= name.index && match.index < name.end)) {
       names.push({ index: match.index, end: match.index + match[0].length, label: match[1].trim(), explicit: false });
     }
@@ -166,7 +177,7 @@ function agencyFromFilename(fileName: string) {
 }
 
 export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta {
-  const text = rawText.replace(/\u00a0/g, ' ').replace(/[^\S\r\n]+/g, ' ').trim();
+  const text = rawText.normalize('NFKC').replace(/[\u200b\u00ad]/g, '').replace(/\r\n?/g, '\n').replace(/[^\S\r\n]+/g, ' ').trim();
   const warnings: string[] = [];
   const fileAgency = agencyFromFilename(fileName);
   const contentAgency = text.replace(/\s+/g, ' ').match(/\bAgencia\s+(\d{2,5})\s+(.+?)\s+Direcci[oó]n\b/i);
@@ -174,13 +185,17 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
   const agencyCode = fileAgency?.code || contentAgency?.[1] || '';
   const agencyName = fileAgency?.name || contentAgency?.[2]?.trim() || '';
 
-  // PDF.js can return table cells before their visual section headings, so the
-  // whole document is scanned. HOSTNAME and IPv4 tokens are specific enough
-  // to the equipment table in the supplied boleta format.
-  const equipmentText = text;
-  const hostnameMatches = Array.from(equipmentText.matchAll(/\bHOSTNAME\s*:?\s+(?!IP\b|No\.?\s|DATAMATRIX\b)([\p{L}\p{N}_-]+)/giu));
-  const hostnames = hostnameMatches.map((match) => match[1].toUpperCase());
-  const ips = Array.from(
+  // Observations can mention boxes or replacement identifiers. Only equipment
+  // rows are station records; a note must not create or rename a station.
+  const equipmentStart = text.match(/\bDatos\s+(?:de\s+)?equipos\b/i);
+  const equipmentText = text.slice(equipmentStart ? equipmentStart.index! + equipmentStart[0].length : 0)
+    .split(/\b(?:Mantenimiento\s+Preventivo|Observaciones)\b/i)[0];
+  // Keep a slot even when a HOSTNAME/IP cell is blank. Do not cross a newline
+  // looking for its value: that would consume a heading or the next field.
+  const hostnameMatches = Array.from(equipmentText.matchAll(/\bHOSTNAME\b[ \t]*[:：]?[ \t]*((?!(?:HOSTNAME|IP|No\.?|DATAMATRIX|USUARIO|MARCA|MODELO)\b)[\p{L}\p{N}_-]+)?/giu));
+  const hostnames = hostnameMatches.map((match) => match[1]?.toUpperCase() || '');
+  const ipMatches = Array.from(equipmentText.matchAll(/\bIP\b[ \t]*[:：]?[ \t]*((?:\d{1,3}\.){3}\d{1,3})?/gi));
+  const ips = ipMatches.length ? ipMatches.map((match) => match[1] || '') : Array.from(
     equipmentText.matchAll(/\b((?:\d{1,3}\.){3}\d{1,3})\b/g),
     (match) => match[1],
   );
@@ -201,16 +216,29 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
   );
 
   const names = stationNamesFromText(equipmentText);
-  const stationCount = Math.max(hostnames.length, ips.length);
+  const stationCount = Math.max(hostnames.length, ips.length, hostnames.length ? 0 : names.length);
   const labelsByHost = new Map<number, string>();
-  if (names.length === stationCount) {
+  const namesInColumns = names.length === stationCount && (
+    !isStationOrdered || names.every((name) => name.end <= (hostnameMatches[0]?.index ?? 0))
+  );
+  if (namesInColumns) {
     names.forEach((name, index) => labelsByHost.set(index, name.label));
   } else {
+    const explicitByHost = new Set<number>();
     for (const name of names) {
       const nextIndex = hostnameMatches.findIndex((match) => match.index >= name.end);
       const immediatelyBeforeNext = nextIndex >= 0 && !equipmentText.slice(name.end, hostnameMatches[nextIndex].index).trim();
-      const index = immediatelyBeforeNext ? nextIndex : nextIndex === -1 ? hostnameMatches.length - 1 : Math.max(0, nextIndex - 1);
-      if (!labelsByHost.has(index) || name.explicit) labelsByHost.set(index, name.label);
+      const startsLine = !equipmentText.slice(equipmentText.lastIndexOf('\n', name.index - 1) + 1, name.index).trim();
+      const inlineExplicit = name.explicit && !startsLine && nextIndex > 0;
+      const index = nextIndex >= 0 && ((immediatelyBeforeNext && !inlineExplicit) || (!name.explicit && startsLine))
+        ? nextIndex : nextIndex === -1 ? hostnameMatches.length - 1 : Math.max(0, nextIndex - 1);
+      if (index < 0) continue;
+      const previous = labelsByHost.get(index);
+      if (previous && name.label && previous !== name.label && (name.explicit === explicitByHost.has(index))) {
+        warnings.push(`Se encontraron varios nombres para ${hostnames[index]}: «${previous}» y «${name.label}». Revisa el nombre de la caja antes de cargar las fotos.`);
+      }
+      if (!labelsByHost.has(index) || (name.explicit && !explicitByHost.has(index))) labelsByHost.set(index, name.label);
+      if (name.explicit) explicitByHost.add(index);
     }
   }
   const reservedLabels = new Set<string>([
@@ -218,23 +246,25 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
   ].filter(Boolean).map(archiveNameKey));
   const stations = Array.from({ length: stationCount }, (_, index) => {
     const hostname = hostnames[index] || '';
-    const block = isStationOrdered ? stationBlocks[index] : undefined;
+    const block = isStationOrdered ? stationBlocks[index] : !hostnames.length && names.length === stationCount
+      ? equipmentText.slice(names[index].index, names[index + 1]?.index) : undefined;
     const followingHostname = hostnameMatches[index]
       ? equipmentText.slice(hostnameMatches[index].index + hostnameMatches[index][0].length, hostnameMatches[index + 1]?.index)
       : '';
-    const spacedCajaName = /CAJA$/i.test(hostname)
+    const spacedCajaKind = hostname.match(/(AUTOCAJA|CAJA)$/i)?.[1];
+    const spacedCajaName = spacedCajaKind
       ? followingHostname.match(/^\s+([\p{L}\p{N}_ -]+?)(?=\s+(?:IP\b|No\.?\s|DATAMATRIX\b|(?:\d{1,3}\.){3}\d{1,3}\b)|[\r\n]|$)/iu)?.[1]?.trim()
       : '';
-    const detectedLabel = labelsByHost.get(index) || (spacedCajaName ? stationParts(`CAJA ${spacedCajaName}`).folder : stationLabelFromHostname(hostname));
+    const detectedLabel = labelsByHost.get(index) || (spacedCajaName ? stationParts(`${spacedCajaKind} ${spacedCajaName}`).folder : stationLabelFromHostname(hostname));
     return {
       hostname,
       ip: block === undefined ? ips[index] || '' : block.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0] || '',
       label: detectedLabel || reserveBackupFolder(reservedLabels),
       nameMissing: !detectedLabel,
-      serial: block === undefined || serials.length === hostnames.length
+      serial: block === undefined || serials.length === stationCount
         ? serials[index] || ''
         : Array.from(block.matchAll(serialPattern))[0]?.[1] || '',
-      datamatrix: block === undefined || datamatrices.length === hostnames.length
+      datamatrix: block === undefined || datamatrices.length === stationCount
         ? datamatrices[index] || ''
         : Array.from(block.matchAll(datamatrixPattern))[0]?.[1]?.toUpperCase() || '',
     };
@@ -248,6 +278,15 @@ export function parseBoletaText(rawText: string, fileName: string): ParsedBoleta
   }
   if (hostnames.length !== ips.length) {
     warnings.push('La cantidad de hostnames e IP no coincide. Revisa las estaciones antes de continuar.');
+  }
+  if (stations.some((station) => station.nameMissing)) {
+    warnings.push('No se identificó el nombre de algunas cajas. Revisa las estaciones con nombre BACKUP y escribe el nombre correcto en Editar datos.');
+  }
+  const seenLabels = new Set<string>();
+  for (const station of stations) {
+    const key = archiveNameKey(station.label);
+    if (seenLabels.has(key)) warnings.push(`Se repite el nombre «${station.label}». Revisa si corresponde a cajas distintas antes de cargar las fotos.`);
+    seenLabels.add(key);
   }
   if (serials.length > stationCount || datamatrices.length > stationCount) {
     warnings.push('La boleta contiene más campos de certificadora que estaciones identificadas. Revisa las estaciones; puedes agregar, corregir o excluir las que correspondan.');
@@ -266,7 +305,7 @@ export function extensionOf(fileName: string) {
 
 export function photoOutputName(label: string, ip: string, role: RequiredPhotoRole, originalName: string, separateIdentifiers = false) {
   const { prefix } = stationParts(label);
-  const safeIp = cleanSegment(ip, 'SIN_IP');
+  const safeIp = cleanSegment(ip, '');
   const suffix: Record<RequiredPhotoRole, string> = {
     certificadora: 'Fotografia Certificadora',
     serie: `Fotografia No. Serie y Código DATAMATRIX${separateIdentifiers ? ' 1' : ''}`,
@@ -274,7 +313,7 @@ export function photoOutputName(label: string, ip: string, role: RequiredPhotoRo
     inventario: 'Fotografia No. Serie y Código DATAMATRIX 2',
     ubicacionInventario: 'Fotografia Ubicación No. Serie y Código DATAMATRIX 2',
   };
-  return `${prefix}_IP_${safeIp} ${suffix[role]}${extensionOf(originalName)}`;
+  return `${prefix}${safeIp ? `_IP_${safeIp}` : ''} ${suffix[role]}${extensionOf(originalName)}`;
 }
 
 export function agencyFolderName(code: string, name: string) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import JSZip from 'jszip';
-import { addPhotosToZip, agencyFolderName, planPhotosForZip, stationIssues } from '../app/organizer.ts';
+import { addPhotosToZip, agencyFolderName, photoOutputName, planPhotosForZip, stationIssues } from '../app/organizer.ts';
 import { addDocumentsToZip, blankDocuments } from '../app/documents.ts';
 
 const photoBytes = new Uint8Array([255, 216, 255, 128, 0, 10]);
@@ -104,7 +104,7 @@ test('missing metadata and incomplete or extra stations remain downloadable with
   const zip = new JSZip();
   await addPhotosToZip(zip, [backup, reportes, extra], []);
   const saved = await JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array' }));
-  assert.ok(saved.file('BACKUP/BACKUP_IP_SIN_IP Fotografia Certificadora.JPG'));
+  assert.ok(saved.file('BACKUP/BACKUP Fotografia Certificadora.JPG'));
   assert.ok(saved.file('CAJA REPORTES/CAJAREPORTES_IP_10.0.0.1 Fotografia Certificadora.JPG'));
   assert.equal(Object.keys(saved.files).some((name) => name.startsWith('CAJA 3/')), false);
   assert.equal(Object.values(saved.files).filter((entry) => !entry.dir).length, 5);
@@ -116,4 +116,26 @@ test('multiple unnamed stations get distinct BACKUP folders and keep all of thei
   assert.ok(zip.files['BACKUP/']);
   assert.ok(zip.files['BACKUP 2/']);
   assert.equal(Object.values(zip.files).filter((entry) => !entry.dir).length, 6);
+});
+
+test('named boxes without IP create their own folders and preserve all photo bytes', async () => {
+  const zip = new JSZip();
+  const boxes = [
+    { ...station('CAJA 10'), ip: '', hostname: '' },
+    { ...station('CAJA ADMAC', true), ip: '   ', hostname: '' },
+  ];
+  await addPhotosToZip(zip, boxes, []);
+  const saved = await JSZip.loadAsync(await zip.generateAsync({ type: 'uint8array' }));
+  assert.ok(saved.files['CAJA 10/']);
+  assert.ok(saved.files['CAJA ADMAC/']);
+  assert.ok(saved.file('CAJA 10/Caja10 Fotografia Certificadora.JPG'));
+  assert.ok(saved.file('CAJA ADMAC/CAJAADMAC Fotografia No. Serie y Código DATAMATRIX 2.jpg'));
+  const photos = Object.values(saved.files).filter((entry) => !entry.dir);
+  assert.equal(photos.length, 8);
+  for (const photo of photos) {
+    assert.doesNotMatch(photo.name, /_IP_|SIN_IP/);
+    assert.deepEqual(await photo.async('uint8array'), photoBytes);
+  }
+  assert.ok(stationIssues(boxes[0]).some((issue) => issue.field === 'ip' && issue.message.includes('omitirán la IP')));
+  assert.equal(photoOutputName('CAJA 10', '10.0.0.10', 'certificadora', 'foto.jpg'), 'Caja10_IP_10.0.0.10 Fotografia Certificadora.jpg');
 });

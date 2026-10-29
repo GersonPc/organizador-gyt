@@ -2,12 +2,13 @@
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { RequiredPhotoRole, StationPhotoFiles } from './organizer';
+import { pdfPageText } from './pdf-text';
 import { addDocumentsToZip, blankDocuments, DOCUMENT_SLOTS, documentFileError, planDocumentsForZip } from './documents';
 import type { DocumentFiles, DocumentRole } from './documents';
 import {
   agencyFolderName,
   addPhotosToZip,
-  hasCertificadora,
+  stationNeedsPhotos,
   parseBoletaText,
   planPhotosForZip,
   photoOutputName,
@@ -261,13 +262,13 @@ export default function Home() {
       for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
         const page = await document.getPage(pageNumber);
         const content = await page.getTextContent();
-        pageTexts.push(content.items.map((item) => 'str' in item ? `${item.str}${item.hasEOL ? '\n' : ' '}` : '').join(''));
+        pageTexts.push(pdfPageText(content.items));
       }
       const parsed = parseBoletaText(pageTexts.join('\n'), file.name);
       setAgencyCode(parsed.agencyCode);
       setAgencyName(parsed.agencyName);
-      const withCertificadora = parsed.stations.filter(hasCertificadora);
-      setExcludedStationLabels(parsed.stations.filter((station) => !hasCertificadora(station)).map((station) => station.label));
+      const withCertificadora = parsed.stations.filter(stationNeedsPhotos);
+      setExcludedStationLabels(parsed.stations.filter((station) => !stationNeedsPhotos(station)).map((station) => station.label));
       setStations(
         withCertificadora.map((station) => ({
           ...station,
@@ -541,7 +542,7 @@ export default function Home() {
                           <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-sm font-black ${complete ? 'bg-[#e2f2e8] text-[#17663f]' : 'bg-[#172033] text-white'}`} aria-hidden="true">{complete ? '✓' : stationIndex + 1}</span>
                           <div className="min-w-0">
                             <h3 id={`station-title-${station.id}`} className="break-words font-black">{stationParts(station.label).folder}</h3>
-                            <p className="mt-1 break-words text-xs text-[#626a78]">{station.ip || 'IP sin especificar'}</p>
+                            <p className="mt-1 break-words text-xs text-[#626a78]">{station.ip || 'Sin IP · las fotos se nombrarán sin IP'}</p>
                           </div>
                         </div>
                         <CollapseButton station={station} onClick={() => updateStation(station.id, { collapsed: !station.collapsed })} />
@@ -596,7 +597,7 @@ export default function Home() {
                         ))}
                       </div>
 
-                      {station.ip && ready > 0 && (
+                      {ready > 0 && (
                         <div className="mt-4 break-words rounded-xl bg-[#f4f3ef] p-3 text-[11px] leading-5 text-[#646b78]">
                           <strong className="block text-[#333c4e]">Ejemplo de nombre final</strong>
                           {photoOutputName(station.label, station.ip, 'certificadora', station.files.certificadora?.name || 'foto.jpg')}
